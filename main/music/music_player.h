@@ -25,7 +25,7 @@ public:
     void Stop();
 
     bool IsBusy() const;
-    bool IsActive(uint32_t playback_id) const;
+    bool IsActive(uint32_t playback_id = 0) const;
     // 供 AudioService 的 on_playback_drained 回调转发：播放队列排空后判定是否结束。
     void OnPlaybackDrained();
 
