@@ -116,6 +116,33 @@ void McpServer::AddCommonTools() {
     }
 #endif
 
+    // 设备端音乐播放：接收音频直链（MP3）并流式播放。
+    // 注意：这是设备本地播放，与云端 MCP 音乐服务的 ResourceLink 协议无关。
+    AddTool("self.music.play_url",
+            "Play an audio file from a direct HTTP(S) URL on the device speaker.\n"
+            "Use this tool whenever the user asks to play a song and you already have a playable "
+            "audio URL (for example from a music search tool).\n"
+            "Args:\n"
+            "  `url`: The direct audio URL (MP3) to play.\n"
+            "Return:\n"
+            "  A JSON object indicating whether playback started.",
+            PropertyList({Property("url", kPropertyTypeString)}),
+            [](const PropertyList& properties) -> ReturnValue {
+                auto url = properties["url"].value<std::string>();
+                auto& app = Application::GetInstance();
+                if (!app.StartMusic(std::move(url))) {
+                    return "{\"success\": false, \"message\": \"设备忙或链接无效\"}";
+                }
+                return "{\"success\": true, \"message\": \"开始播放\"}";
+            });
+
+    AddTool("self.music.stop",
+            "Stop the music currently playing on the device.",
+            PropertyList(), [](const PropertyList& properties) -> ReturnValue {
+                Application::GetInstance().StopMusic();
+                return true;
+            });
+
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), std::make_move_iterator(original_tools.begin()),
                   std::make_move_iterator(original_tools.end()));

@@ -22,7 +22,7 @@
 
 #define TAG "Application"
 
-Application::Application() : notify_player_(audio_service_) {
+Application::Application() : notify_player_(audio_service_), music_player_(audio_service_) {
     event_group_ = xEventGroupCreate();
 
 #if CONFIG_USE_DEVICE_AEC && CONFIG_USE_SERVER_AEC
@@ -225,6 +225,7 @@ void Application::Run() {
         if (bits & MAIN_EVENT_PLAYBACK_DRAINED) {
             if (audio_service_.IsPlaybackIdle()) {
                 notify_player_.OnPlaybackDrained();
+                music_player_.OnPlaybackDrained();
             }
             // Deferred listening start (auto mode): the playback queue has
             // drained, so it is now safe to enable voice processing.
@@ -332,6 +333,9 @@ void Application::HandleNetworkDisconnectedEvent() {
     auto state = GetDeviceState();
     if (state == kDeviceStateNotifying) {
         StopNotification();
+    }
+    if (music_player_.IsBusy()) {
+        StopMusic();
     }
     if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
         state == kDeviceStateSpeaking) {
@@ -1024,6 +1028,12 @@ void Application::HandleStateChangedEvent() {
     // the Listening case below re-arms it when needed.
     pending_listening_start_ = false;
 
+    // 音乐只在空闲态播放。一旦进入其它状态（服务器 TTS、聆听、连接等），
+    // 立即停止音乐，保证同一时刻只有一个音频输出者。
+    if (new_state != kDeviceStateIdle && music_player_.IsBusy()) {
+        StopMusic();
+    }
+
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
     auto led = board.GetLed();
@@ -1256,6 +1266,72 @@ void Application::HandleNotificationFinished(uint32_t playback_id, bool success)
              success ? "completed" : "failed");
     StopNotification();
 }
+
+bool Application::StartMusic(std::string audio_url) {
+    if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy() ||
+        music_player_.IsBusy()) {
+        ESP_LOGW(TAG, "Ignoring music request while device is busy");
+        return false;
+    }
+
+    auto& board = Board::GetInstance();
+    board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    audio_service_.EnableVoiceProcessing(false);
+    // 保留唤醒词检测，用户可随时用唤醒词打断音乐。
+    audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
+    while (audio_service_.PopPacketFromSendQueue()) {
+        // 丢弃上一轮对话残留的麦克风数据。
+    }
+    audio_service_.ResetDecoder();
+
+    uint32_t playback_id = ++music_playback_id_;
+    if (playback_id == 0) {
+        playback_id = ++music_playback_id_;
+    }
+
+    bool started = music_player_.Start(
+        std::move(audio_url), playback_id,
+        [this](uint32_t id, bool success) {
+            Schedule([this, id, success]() { HandleMusicFinished(id, success); });
+        });
+
+    if (!started) {
+        ESP_LOGE(TAG, "Failed to start music playback");
+        StopMusic();
+        return false;
+    }
+
+    board.GetDisplay()->SetChatMessage("assistant", "正在播放音乐...");
+    ESP_LOGI(TAG, "Music playback started, id=%lu",
+             static_cast<unsigned long>(playback_id));
+    return true;
+}
+
+void Application::StopMusic() {
+    if (!music_player_.IsBusy()) {
+        return;
+    }
+    music_player_.Stop();
+    audio_service_.ResetDecoder();
+    auto& board = Board::GetInstance();
+    board.GetDisplay()->SetChatMessage("assistant", "");
+    // 回到低功耗；仅在空闲态时生效，避免干扰正在进行的对话状态。
+    if (GetDeviceState() == kDeviceStateIdle) {
+        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    }
+    ESP_LOGI(TAG, "Music playback stopped");
+}
+
+void Application::HandleMusicFinished(uint32_t playback_id, bool success) {
+    if (music_playback_id_ != playback_id) {
+        return;
+    }
+    ESP_LOGI(TAG, "Music playback %lu %s", static_cast<unsigned long>(playback_id),
+             success ? "completed" : "failed");
+    StopMusic();
+}
+
+bool Application::IsMusicPlaying() const { return music_player_.IsActive(); }
 
 void Application::Schedule(std::function<void()>&& callback) {
     {

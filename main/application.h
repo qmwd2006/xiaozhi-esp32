@@ -20,6 +20,7 @@
 #include "device_state.h"
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
+#include "music/music_player.h"
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -118,6 +119,11 @@ public:
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
+
+    // 播放一个音频直链（MP3），用于设备端音乐播放。仅当设备空闲时可用。
+    bool StartMusic(std::string audio_url);
+    void StopMusic();
+    bool IsMusicPlaying() const;
     
     /**
      * Reset protocol resources (thread-safe)
@@ -144,6 +150,8 @@ private:
     AudioService audio_service_;
     NotifyPlayer notify_player_;
     uint32_t notification_playback_id_ = 0;
+    MusicPlayer music_player_;
+    uint32_t music_playback_id_ = 0;
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
@@ -178,6 +186,7 @@ private:
     void StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles);
     void StopNotification();
     void HandleNotificationFinished(uint32_t playback_id, bool success);
+    void HandleMusicFinished(uint32_t playback_id, bool success);
 
     // Activation task (runs in background)
     void ActivationTask();

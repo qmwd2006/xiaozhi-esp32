@@ -143,6 +143,9 @@ public:
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
+    // 将已解码的 PCM 帧直接放入播放队列（用于本地音乐等非 Opus 音源）。
+    // 复用 AudioOutputTask，因此同样受功放管理、打断（playback_generation_）约束。
+    bool PushPcmToPlaybackQueue(std::vector<int16_t>&& pcm, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);

@@ -1,0 +1,39 @@
+name: Build audio board music firmware
+
+# 手动触发：仓库页面 Actions -> Build audio board music firmware -> Run workflow
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build waveshare/esp32-s3-audio-board
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:release-v6.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        shell: bash
+        env:
+          BOARD: waveshare/esp32-s3-audio-board
+          VARIANT: esp32-s3-audio-board
+        run: |
+          source "$IDF_PATH/export.sh"
+          python scripts/build.py "$BOARD" --name "$VARIANT"
+          echo "==== 产物 ===="
+          ls -lh build/merged-binary.bin
+
+      - name: Upload merged binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: xiaozhi-music-esp32-s3-audio-board_${{ github.sha }}
+          path: build/merged-binary.bin
+          if-no-files-found: error
+          retention-days: 30
