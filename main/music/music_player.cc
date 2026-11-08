@@ -278,7 +278,7 @@ void MusicPlayer::WorkerTask() {
                     ESP_LOGE(TAG, "Failed to open MP3 decoder: %d", ret);
                 } else {
                     success = true;
-                    std::array<uint8_t, kHttpReadBufferSize> http_buf;
+                    std::array<char, kHttpReadBufferSize> http_buf;
                     std::vector<uint8_t> pcm_buf(kPcmFrameBytes);
                     int src_rate = 0;
                     int src_channels = 0;
@@ -332,7 +332,7 @@ void MusicPlayer::WorkerTask() {
                                 cfg.bits_per_sample = ESP_AUDIO_BIT16;
                                 cfg.complexity = 2;
                                 cfg.perf_type = ESP_AE_RATE_CVT_PERF_TYPE_SPEED;
-                                if (esp_ae_rate_cvt_open(&cfg, &resampler) != ESP_AUDIO_ERR_OK) {
+                                if (esp_ae_rate_cvt_open(&cfg, &resampler) != ESP_AE_ERR_OK) {
                                     resampler = nullptr;
                                 }
                                 resample_rate = src_rate;
@@ -446,7 +446,8 @@ void MusicPlayer::WorkerTask() {
                         if (*size == 0) {
                             break;
                         }
-                        process_input(http_buf.data(), *size, false);
+                        process_input(reinterpret_cast<const uint8_t*>(http_buf.data()), *size,
+                                      false);
                     }
 
                     if (success && !IsCancelled(playback_id)) {

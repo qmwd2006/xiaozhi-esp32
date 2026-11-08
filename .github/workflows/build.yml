@@ -1,15 +1,9 @@
 name: Build Boards
 
 on:
-  # Manual runs exercise the full matrix, including CI-specific options.
+  # 仅手动触发：本 fork 只用于编译单个音频板固件，
+  # 避免 push 时运行官方全量板型矩阵（非常耗时）。
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - ci/* # for ci test
-  pull_request:
-    branches:
-      - main
 
 permissions:
   contents: read
