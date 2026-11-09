@@ -118,8 +118,10 @@ void McpServer::AddCommonTools() {
 
     // 设备端音乐播放：接收音频直链（MP3）并流式播放。
     // 注意：这是设备本地播放，与云端 MCP 音乐服务的 ResourceLink 协议无关。
+    // ---- 设备端音乐播放器：完整操作集 ----
+    // play_url：立即播放（若正在播放则先停止当前曲目再播新的）。
     AddTool("self.music.play_url",
-            "Play an audio file from a direct HTTP(S) URL on the device speaker.\n"
+            "Play an audio file from a direct HTTP(S) URL on the device speaker immediately.\n"
             "Use this tool whenever the user asks to play a song and you already have a playable "
             "audio URL (for example from a music search tool).\n"
             "Args:\n"
@@ -129,17 +131,43 @@ void McpServer::AddCommonTools() {
             PropertyList({Property("url", kPropertyTypeString)}),
             [](const PropertyList& properties) -> ReturnValue {
                 auto url = properties["url"].value<std::string>();
-                auto& app = Application::GetInstance();
-                if (!app.StartMusic(std::move(url))) {
-                    return "{\"success\": false, \"message\": \"设备忙或链接无效\"}";
+                if (!Application::GetInstance().PlayMusicNow(std::move(url))) {
+                    return "{\"success\": false, \"message\": \"链接无效\"}";
                 }
                 return "{\"success\": true, \"message\": \"开始播放\"}";
+            });
+
+    // enqueue_url：加入播放列表（当前曲目继续，播完接这首）。
+    AddTool("self.music.enqueue_url",
+            "Add an audio URL to the device play queue without interrupting the current song.\n"
+            "Use this when the user wants to queue up several songs in order.",
+            PropertyList({Property("url", kPropertyTypeString)}),
+            [](const PropertyList& properties) -> ReturnValue {
+                auto url = properties["url"].value<std::string>();
+                if (!Application::GetInstance().EnqueueMusic(std::move(url))) {
+                    return "{\"success\": false, \"message\": \"链接无效\"}";
+                }
+                return "{\"success\": true, \"message\": \"已加入播放列表\"}";
             });
 
     AddTool("self.music.stop",
             "Stop music playback on the device and clear the play queue.",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 Application::GetInstance().StopMusic();
+                return true;
+            });
+
+    AddTool("self.music.pause",
+            "Pause the current song, keeping the playback position.",
+            PropertyList(), [](const PropertyList& properties) -> ReturnValue {
+                Application::GetInstance().PauseMusic();
+                return true;
+            });
+
+    AddTool("self.music.resume",
+            "Resume the paused song from where it stopped.",
+            PropertyList(), [](const PropertyList& properties) -> ReturnValue {
+                Application::GetInstance().ResumeMusic();
                 return true;
             });
 
@@ -150,12 +178,31 @@ void McpServer::AddCommonTools() {
                 return true;
             });
 
+    AddTool("self.music.prev",
+            "Go back to the previous song.",
+            PropertyList(), [](const PropertyList& properties) -> ReturnValue {
+                Application::GetInstance().PrevMusic();
+                return true;
+            });
+
+    AddTool("self.music.seek",
+            "Jump to a position (in seconds) in the current song.",
+            PropertyList({Property("position", kPropertyTypeInteger, 0, 86400)}),
+            [](const PropertyList& properties) -> ReturnValue {
+                int position = properties["position"].value<int>();
+                bool ok = Application::GetInstance().SeekMusic(position);
+                return ok;
+            });
+
     AddTool("self.music.status",
-            "Report whether music is playing and how many songs remain in the queue.",
+            "Report music state: playing/paused, position, duration and queue length.",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 auto& app = Application::GetInstance();
                 cJSON* json = cJSON_CreateObject();
                 cJSON_AddBoolToObject(json, "playing", app.IsMusicPlaying());
+                cJSON_AddBoolToObject(json, "paused", app.IsMusicPaused());
+                cJSON_AddNumberToObject(json, "position", app.MusicPositionSeconds());
+                cJSON_AddNumberToObject(json, "duration", app.MusicDurationSeconds());
                 cJSON_AddNumberToObject(json, "queue_length", app.MusicQueueLength());
                 return json;
             });

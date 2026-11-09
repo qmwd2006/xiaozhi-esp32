@@ -173,9 +173,15 @@ bool MusicPlayer::Start(std::string audio_url, uint32_t playback_id,
         active_ = true;
         worker_running_ = true;
         cancelled_ = false;
+        paused_ = false;
         http_finished_ = false;
         playback_drained_ = false;
         completion_reported_ = false;
+        total_bytes_ = 0;
+        current_byte_ = 0;
+        bitrate_bps_ = 0;
+        seek_target_byte_ = -1;
+        seek_pending_ = false;
     }
 
     BaseType_t created = xTaskCreate(WorkerEntry, "music_http", kMusicTaskStackSize, this,
@@ -193,10 +199,83 @@ bool MusicPlayer::Start(std::string audio_url, uint32_t playback_id,
 }
 
 void MusicPlayer::Stop() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cancelled_ = true;
+        active_ = false;
+        paused_ = false;
+        // 保留 finished_callback_：worker 退出时会回调，
+        // 调用方据此决定是否接续播放下一首（避免 Stop 后立即 Start 的竞态）。
+    }
+    pause_cv_.notify_all();
+}
+
+void MusicPlayer::Pause() {
     std::lock_guard<std::mutex> lock(mutex_);
-    cancelled_ = true;
-    active_ = false;
-    finished_callback_ = nullptr;
+    if (!active_) {
+        return;
+    }
+    paused_ = true;
+    ESP_LOGI(TAG, "Music paused");
+}
+
+void MusicPlayer::Resume() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!active_ || !paused_) {
+            return;
+        }
+        paused_ = false;
+        ESP_LOGI(TAG, "Music resumed");
+    }
+    pause_cv_.notify_all();
+}
+
+bool MusicPlayer::IsPaused() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return paused_;
+}
+
+bool MusicPlayer::Seek(int seconds) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!active_ || total_bytes_ <= 0 || bitrate_bps_ <= 0) {
+        ESP_LOGW(TAG, "Seek not supported yet (total=%lld bitrate=%d)",
+                 static_cast<long long>(total_bytes_), bitrate_bps_);
+        return false;
+    }
+    if (seconds < 0) {
+        seconds = 0;
+    }
+    int64_t byte = static_cast<int64_t>(bitrate_bps_) / 8 * seconds;
+    if (byte > total_bytes_) {
+        byte = total_bytes_;
+    }
+    seek_target_byte_ = byte;
+    seek_pending_ = true;
+    ESP_LOGI(TAG, "Seek requested: %d s -> byte %lld", seconds,
+             static_cast<long long>(byte));
+    return true;
+}
+
+int MusicPlayer::PositionSeconds() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (bitrate_bps_ <= 0) {
+        return 0;
+    }
+    return static_cast<int>(current_byte_ * 8 / bitrate_bps_);
+}
+
+int MusicPlayer::DurationSeconds() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (bitrate_bps_ <= 0 || total_bytes_ <= 0) {
+        return 0;
+    }
+    return static_cast<int>(total_bytes_ * 8 / bitrate_bps_);
+}
+
+void MusicPlayer::WaitIfPaused() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    pause_cv_.wait(lock, [this]() { return !paused_ || cancelled_ || !active_; });
 }
 
 bool MusicPlayer::IsActive(uint32_t playback_id) const {
@@ -271,6 +350,11 @@ void MusicPlayer::WorkerTask() {
         if (opened) {
             auto status = http->GetStatusCode();
             if (status && *status >= 200 && *status < 300 && !IsCancelled(playback_id)) {
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    total_bytes_ = static_cast<int64_t>(http->GetBodyLength());
+                    current_byte_ = 0;
+                }
                 ESP_LOGI(TAG, "HTTP %d, content-length=%d", *status,
                          static_cast<int>(http->GetBodyLength()));
                 EnsureMp3DecoderRegistered();
@@ -411,8 +495,11 @@ void MusicPlayer::WorkerTask() {
                                             ESP_AUDIO_ERR_OK) {
                                             src_rate = static_cast<int>(info.sample_rate);
                                             src_channels = info.channel;
-                                            ESP_LOGI(TAG, "MP3 stream: %d Hz, %d ch", src_rate,
-                                                     src_channels);
+                                            ESP_LOGI(TAG, "MP3 stream: %d Hz, %d ch, %d bps",
+                                                     src_rate, src_channels,
+                                                     static_cast<int>(info.bitrate));
+                                            std::lock_guard<std::mutex> lock(mutex_);
+                                            bitrate_bps_ = static_cast<int>(info.bitrate);
                                         }
                                     }
                                     emit_pcm(pcm_buf.data(), out.decoded_size);
@@ -442,6 +529,11 @@ void MusicPlayer::WorkerTask() {
                     };
 
                     while (!IsCancelled(playback_id)) {
+                        // 暂停时阻塞在这里，不读取也不推帧。
+                        WaitIfPaused();
+                        if (IsCancelled(playback_id)) {
+                            break;
+                        }
                         auto size = http->Read(http_buf.data(), http_buf.size());
                         if (!size) {
                             ESP_LOGE(TAG, "Music HTTP read failed: %s",
@@ -451,6 +543,10 @@ void MusicPlayer::WorkerTask() {
                         }
                         if (*size == 0) {
                             break;
+                        }
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            current_byte_ += *size;
                         }
                         process_input(reinterpret_cast<const uint8_t*>(http_buf.data()), *size,
                                       false);
@@ -485,14 +581,24 @@ void MusicPlayer::WorkerTask() {
         std::lock_guard<std::mutex> lock(mutex_);
         worker_running_ = false;
         task_handle_ = nullptr;
-        if (!cancelled_ && active_ && playback_id == playback_id_) {
-            if (!success) {
-                callback = CompleteLocked(completed_playback_id);
-            } else {
-                http_finished_ = true;
-                if (playback_drained_) {
+        if (playback_id == playback_id_) {
+            if (cancelled_) {
+                // 被主动停止：通知调用方，以便接续播放（下一曲/替换曲目）。
+                completed_playback_id = playback_id_;
+                callback = finished_callback_;
+                finished_callback_ = nullptr;
+                completion_reported_ = true;
+                active_ = false;
+                report_success = false;
+            } else if (active_) {
+                if (!success) {
                     callback = CompleteLocked(completed_playback_id);
-                    report_success = true;
+                } else {
+                    http_finished_ = true;
+                    if (playback_drained_) {
+                        callback = CompleteLocked(completed_playback_id);
+                        report_success = true;
+                    }
                 }
             }
         }

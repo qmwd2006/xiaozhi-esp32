@@ -61,6 +61,17 @@ class McpServerTest(unittest.TestCase):
                     bool UpgradeFirmware(const std::string&) { std::abort(); }
                     bool StartMusic(std::string) { return true; }
                     void StopMusic() {}
+                    void NextMusic() {}
+                    void PrevMusic() {}
+                    void PauseMusic() {}
+                    void ResumeMusic() {}
+                    bool SeekMusic(int) { return true; }
+                    bool EnqueueMusic(std::string) { return true; }
+                    bool IsMusicPlaying() const { return false; }
+                    bool IsMusicPaused() const { return false; }
+                    int MusicPositionSeconds() const { return 0; }
+                    int MusicDurationSeconds() const { return 0; }
+                    int MusicQueueLength() const { return 0; }
                 };
                 class Settings {
                 public:

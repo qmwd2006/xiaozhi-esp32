@@ -126,7 +126,22 @@ public:
     void StopMusic();
     // 跳过当前曲目，立即播放队列中的下一首。
     void NextMusic();
+    // 返回上一首（依据播放历史）。若没有历史则忽略。
+    void PrevMusic();
+    // 暂停/恢复当前曲目（保留进度）。
+    void PauseMusic();
+    void ResumeMusic();
+    // 跳转到指定秒数。
+    bool SeekMusic(int seconds);
+    // 立即播放（打断当前曲目并清空队列）。
+    bool PlayMusicNow(std::string audio_url);
+    // 把 URL 追加到播放队列（不立即打断当前曲目）。
+    bool EnqueueMusic(std::string audio_url);
     bool IsMusicPlaying() const;
+    bool IsMusicPaused() const;
+    // 当前播放位置/总时长（秒）。
+    int MusicPositionSeconds() const;
+    int MusicDurationSeconds() const;
     // 当前播放队列中剩余（含正在播放）的曲目数。
     int MusicQueueLength() const;
     
@@ -157,11 +172,18 @@ private:
     uint32_t notification_playback_id_ = 0;
     MusicPlayer music_player_;
     uint32_t music_playback_id_ = 0;
-    std::string pending_music_url_;
     // 待播放队列：StartMusic 在播放中时追加，播完自动续播。
     std::deque<std::string> music_queue_;
+    // 播放历史（最近播放的在队尾），用于「上一曲」。
+    std::deque<std::string> music_history_;
     // 正在播放的曲目 URL（用于队列长度统计与续播去重）。
     std::string current_music_url_;
+    // 播放历史上限，避免无限增长。
+    static constexpr size_t kMusicHistoryMax = 20;
+    // 主动停止时置位，避免 HandleMusicFinished 把它当成「自然播完」而自动续播。
+    bool music_stop_requested_ = false;
+    // 主动停止后待接续播放的 URL（用于 play_url 的立即切歌）。
+    std::string music_replace_url_;
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
@@ -197,9 +219,12 @@ private:
     void StopNotification();
     void HandleNotificationFinished(uint32_t playback_id, bool success);
     void HandleMusicFinished(uint32_t playback_id, bool success);
-    void TryStartPendingMusic();
     // 尝试从 music_queue_ 取出下一首开始播放（主任务线程调用）。
     void PlayNextMusicFromQueue();
+    // 实际启动指定 URL 的播放（主任务线程调用）。返回是否启动成功。
+    bool StartMusicNow(const std::string& url);
+    // 把当前曲目记入历史（供上一曲使用）。
+    void PushCurrentToHistoryLocked();
 
     // Activation task (runs in background)
     void ActivationTask();
