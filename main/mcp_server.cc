@@ -194,8 +194,38 @@ void McpServer::AddCommonTools() {
                 return ok;
             });
 
+    AddTool("self.music.skip",
+            "Fast-forward or rewind the current song by a number of seconds.\n"
+            "Args:\n"
+            "  `seconds`: positive to fast-forward, negative to rewind.",
+            PropertyList({Property("seconds", kPropertyTypeInteger, 0, -86400, 86400)}),
+            [](const PropertyList& properties) -> ReturnValue {
+                int seconds = properties["seconds"].value<int>();
+                return Application::GetInstance().SkipMusic(seconds);
+            });
+
+    AddTool("self.music.set_repeat",
+            "Set the music repeat mode.\n"
+            "Args:\n"
+            "  `mode`: `off` (stop after queue), `list` (loop the queue), `one` (loop current song).",
+            PropertyList({Property("mode", kPropertyTypeString)}),
+            [](const PropertyList& properties) -> ReturnValue {
+                auto mode = properties["mode"].value<std::string>();
+                auto& app = Application::GetInstance();
+                if (mode == "one" || mode == "single") {
+                    app.SetMusicRepeatMode(Application::MusicRepeatMode::kOne);
+                } else if (mode == "list" || mode == "all") {
+                    app.SetMusicRepeatMode(Application::MusicRepeatMode::kList);
+                } else if (mode == "off" || mode == "none") {
+                    app.SetMusicRepeatMode(Application::MusicRepeatMode::kOff);
+                } else {
+                    return "{\"success\": false, \"message\": \"mode 需为 off/list/one\"}";
+                }
+                return true;
+            });
+
     AddTool("self.music.status",
-            "Report music state: playing/paused, position, duration and queue length.",
+            "Report music state: playing/paused, position, duration, queue length and repeat mode.",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 auto& app = Application::GetInstance();
                 cJSON* json = cJSON_CreateObject();
@@ -204,6 +234,11 @@ void McpServer::AddCommonTools() {
                 cJSON_AddNumberToObject(json, "position", app.MusicPositionSeconds());
                 cJSON_AddNumberToObject(json, "duration", app.MusicDurationSeconds());
                 cJSON_AddNumberToObject(json, "queue_length", app.MusicQueueLength());
+                cJSON_AddStringToObject(
+                    json, "repeat",
+                    app.GetMusicRepeatMode() == Application::MusicRepeatMode::kOne ? "one"
+                    : app.GetMusicRepeatMode() == Application::MusicRepeatMode::kList ? "list"
+                                                                                     : "off");
                 return json;
             });
 

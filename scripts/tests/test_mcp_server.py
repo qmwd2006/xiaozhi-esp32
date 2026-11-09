@@ -72,6 +72,12 @@ class McpServerTest(unittest.TestCase):
                     int MusicPositionSeconds() const { return 0; }
                     int MusicDurationSeconds() const { return 0; }
                     int MusicQueueLength() const { return 0; }
+                    bool SkipMusic(int) { return true; }
+                    enum class MusicRepeatMode { kOff = 0, kList = 1, kOne = 2 };
+                    void SetMusicRepeatMode(MusicRepeatMode) {}
+                    MusicRepeatMode GetMusicRepeatMode() const {
+                        return MusicRepeatMode::kOff;
+                    }
                 };
                 class Settings {
                 public:

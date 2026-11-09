@@ -1360,11 +1360,30 @@ void Application::HandleMusicFinished(uint32_t playback_id, bool success) {
 
     ESP_LOGI(TAG, "Music playback %lu %s", static_cast<unsigned long>(playback_id),
              success ? "completed" : "failed");
+
+    // 单曲循环：把刚播完的这首重新放回队首。
+    if (music_repeat_mode_ == MusicRepeatMode::kOne && !finished_music_url_.empty()) {
+        music_queue_.push_front(finished_music_url_);
+    }
+
     if (!music_queue_.empty()) {
         PlayNextMusicFromQueue();
         return;
     }
-    // 队列已空，收尾并回到低功耗。
+
+    // 队列已空：列表循环则把整段历史重新排入队列。
+    if (music_repeat_mode_ == MusicRepeatMode::kList && !music_history_.empty()) {
+        for (const auto& u : music_history_) {
+            music_queue_.push_back(u);
+        }
+        music_history_.clear();
+        ESP_LOGI(TAG, "Music repeat list: replaying %u songs",
+                 static_cast<unsigned>(music_queue_.size()));
+        PlayNextMusicFromQueue();
+        return;
+    }
+
+    // 顺序播放结束，收尾并回到低功耗。
     auto& board = Board::GetInstance();
     board.GetDisplay()->SetChatMessage("assistant", "");
     if (GetDeviceState() == kDeviceStateIdle) {
@@ -1403,6 +1422,7 @@ void Application::PlayNextMusicFromQueue() {
 
 bool Application::StartMusicNow(const std::string& url) {
     current_music_url_ = url;
+    finished_music_url_ = url;
 
     uint32_t playback_id = ++music_playback_id_;
     if (playback_id == 0) {
@@ -1499,6 +1519,22 @@ bool Application::EnqueueMusic(std::string audio_url) {
         }
     });
     return true;
+}
+
+bool Application::SkipMusic(int delta_seconds) {
+    int pos = music_player_.PositionSeconds() + delta_seconds;
+    if (pos < 0) {
+        pos = 0;
+    }
+    return music_player_.Seek(pos);
+}
+
+void Application::SetMusicRepeatMode(MusicRepeatMode mode) {
+    music_repeat_mode_ = mode;
+    const char* name = mode == MusicRepeatMode::kOne ? "one"
+                       : mode == MusicRepeatMode::kList ? "list"
+                                                        : "off";
+    ESP_LOGI(TAG, "Music repeat mode: %s", name);
 }
 
 bool Application::IsMusicPaused() const { return music_player_.IsPaused(); }

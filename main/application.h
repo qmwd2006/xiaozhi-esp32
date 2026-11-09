@@ -137,6 +137,8 @@ public:
     bool PlayMusicNow(std::string audio_url);
     // 把 URL 追加到播放队列（不立即打断当前曲目）。
     bool EnqueueMusic(std::string audio_url);
+    // 快进/快退（秒，可为负）。
+    bool SkipMusic(int delta_seconds);
     bool IsMusicPlaying() const;
     bool IsMusicPaused() const;
     // 当前播放位置/总时长（秒）。
@@ -144,6 +146,11 @@ public:
     int MusicDurationSeconds() const;
     // 当前播放队列中剩余（含正在播放）的曲目数。
     int MusicQueueLength() const;
+
+    // 循环模式，对齐小米音箱的「单曲循环 / 列表循环 / 顺序播放」。
+    enum class MusicRepeatMode { kOff = 0, kList = 1, kOne = 2 };
+    void SetMusicRepeatMode(MusicRepeatMode mode);
+    MusicRepeatMode GetMusicRepeatMode() const { return music_repeat_mode_; }
     
     /**
      * Reset protocol resources (thread-safe)
@@ -184,6 +191,10 @@ private:
     bool music_stop_requested_ = false;
     // 主动停止后待接续播放的 URL（用于 play_url 的立即切歌）。
     std::string music_replace_url_;
+    // 循环模式：kOff 播完队列即停；kList 队列循环；kOne 单曲循环。
+    MusicRepeatMode music_repeat_mode_ = MusicRepeatMode::kOff;
+    // 最近一次自然播完的曲目 URL（单曲循环时重新入队）。
+    std::string finished_music_url_;
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
