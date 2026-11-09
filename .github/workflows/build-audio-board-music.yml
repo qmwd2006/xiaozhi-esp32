@@ -26,7 +26,9 @@ jobs:
           VARIANT: esp32-s3-audio-board
         run: |
           source "$IDF_PATH/export.sh"
-          python scripts/build.py "$BOARD" --name "$VARIANT"
+          # 中文语言 + 你好小智唤醒词，与官方 Release 固件保持一致
+          python scripts/build.py "$BOARD" --name "$VARIANT" \
+            --language zh-CN --wake-word nihaoxiaozhi
           echo "==== 产物 ===="
           ls -lh build/merged-binary.bin
 
