@@ -1033,6 +1033,10 @@ void Application::HandleStateChangedEvent() {
     if (new_state != kDeviceStateIdle && music_player_.IsBusy()) {
         StopMusic();
     }
+    // 有待播放的音乐时，在回到 Idle/Listening 后尝试接管。
+    if (!pending_music_url_.empty()) {
+        TryStartPendingMusic();
+    }
 
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
@@ -1268,11 +1272,52 @@ void Application::HandleNotificationFinished(uint32_t playback_id, bool success)
 }
 
 bool Application::StartMusic(std::string audio_url) {
-    if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy() ||
-        music_player_.IsBusy()) {
-        ESP_LOGW(TAG, "Ignoring music request while device is busy");
+    if (audio_url.rfind("http://", 0) != 0 && audio_url.rfind("https://", 0) != 0) {
+        ESP_LOGW(TAG, "Invalid music url: %s", audio_url.c_str());
         return false;
     }
+    if (music_player_.IsBusy()) {
+        ESP_LOGW(TAG, "Ignoring music request: player busy");
+        return false;
+    }
+
+    // MCP 工具回调运行在协议线程；记录待播放地址并回到主任务处理。
+    // 不立即启动：此时通常正处于 Speaking（TTS 播报“正在播放…”），
+    // 需要等这段 TTS 结束、设备回到 Idle/Listening 后再接管音频输出。
+    Schedule([this, url = std::move(audio_url)]() mutable {
+        pending_music_url_ = std::move(url);
+        TryStartPendingMusic();
+    });
+    return true;
+}
+
+void Application::TryStartPendingMusic() {
+    if (pending_music_url_.empty()) {
+        return;
+    }
+    if (music_player_.IsBusy() || notify_player_.IsBusy()) {
+        return;
+    }
+
+    auto state = GetDeviceState();
+    if (state == kDeviceStateSpeaking) {
+        // 等确认语播完，tts stop 后会再次进入 Idle/Listening。
+        return;
+    }
+    if (state == kDeviceStateListening) {
+        // 自动聆听模式下 TTS 结束后会停在 Listening；关闭通道回到 Idle 再播放。
+        // 状态切换由 OnAudioChannelClosed 回调完成，这里只发起关闭。
+        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+            protocol_->CloseAudioChannel();
+        }
+        return;
+    }
+    if (GetDeviceState() != kDeviceStateIdle) {
+        return;
+    }
+
+    std::string url = std::move(pending_music_url_);
+    pending_music_url_.clear();
 
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
@@ -1290,7 +1335,7 @@ bool Application::StartMusic(std::string audio_url) {
     }
 
     bool started = music_player_.Start(
-        std::move(audio_url), playback_id,
+        std::move(url), playback_id,
         [this](uint32_t id, bool success) {
             Schedule([this, id, success]() { HandleMusicFinished(id, success); });
         });
@@ -1298,13 +1343,12 @@ bool Application::StartMusic(std::string audio_url) {
     if (!started) {
         ESP_LOGE(TAG, "Failed to start music playback");
         StopMusic();
-        return false;
+        return;
     }
 
     board.GetDisplay()->SetChatMessage("assistant", "正在播放音乐...");
     ESP_LOGI(TAG, "Music playback started, id=%lu",
              static_cast<unsigned long>(playback_id));
-    return true;
 }
 
 void Application::StopMusic() {

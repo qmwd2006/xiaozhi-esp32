@@ -20,7 +20,7 @@
 #include "http.h"
 
 namespace {
-constexpr int kHttpTimeoutMs = 5000;
+constexpr int kHttpTimeoutMs = 10000;
 constexpr size_t kHttpReadBufferSize = 2048;
 constexpr uint32_t kMusicTaskStackSize = 8192;
 constexpr UBaseType_t kMusicTaskPriority = 2;
@@ -260,13 +260,19 @@ void MusicPlayer::WorkerTask() {
     bool success = false;
     auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
     if (http) {
+        // 该超时作用于「块间」等待，不是整个响应；音乐流会持续有数据。
         http->SetTimeout(kHttpTimeoutMs);
         http->SetHeader("Accept", "audio/mpeg, audio/*");
         http->SetHeader("Accept-Encoding", "identity");
+        http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
+        // 部分音源对不带 Referer 的请求返回 403。
+        http->SetHeader("Referer", "https://www.kuwo.cn/");
         auto opened = http->Open("GET", audio_url);
         if (opened) {
             auto status = http->GetStatusCode();
             if (status && *status >= 200 && *status < 300 && !IsCancelled(playback_id)) {
+                ESP_LOGI(TAG, "HTTP %d, content-length=%d", *status,
+                         static_cast<int>(http->GetBodyLength()));
                 EnsureMp3DecoderRegistered();
                 esp_audio_simple_dec_cfg_t dec_cfg = {};
                 dec_cfg.dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;

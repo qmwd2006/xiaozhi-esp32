@@ -152,6 +152,7 @@ private:
     uint32_t notification_playback_id_ = 0;
     MusicPlayer music_player_;
     uint32_t music_playback_id_ = 0;
+    std::string pending_music_url_;
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
@@ -187,6 +188,7 @@ private:
     void StopNotification();
     void HandleNotificationFinished(uint32_t playback_id, bool success);
     void HandleMusicFinished(uint32_t playback_id, bool success);
+    void TryStartPendingMusic();
 
     // Activation task (runs in background)
     void ActivationTask();
