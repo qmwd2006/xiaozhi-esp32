@@ -1029,13 +1029,22 @@ void Application::HandleStateChangedEvent() {
     pending_listening_start_ = false;
 
     // 音乐只在空闲态播放。一旦进入其它状态（服务器 TTS、聆听、连接等），
-    // 立即停止音乐，保证同一时刻只有一个音频输出者。
+    // 立即停止当前曲目，保证同一时刻只有一个音频输出者；
+    // 但保留播放队列，回到 Idle 后自动续播（多曲连播）。
     if (new_state != kDeviceStateIdle && music_player_.IsBusy()) {
-        StopMusic();
+        music_player_.Stop();
+        audio_service_.ResetDecoder();
+        current_music_url_.clear();
+        ESP_LOGI(TAG, "Music paused by state change, queue kept (%u)",
+                 static_cast<unsigned>(music_queue_.size()));
     }
     // 有待播放的音乐时，在回到 Idle/Listening 后尝试接管。
     if (!pending_music_url_.empty()) {
         TryStartPendingMusic();
+    } else if (new_state == kDeviceStateIdle && !music_queue_.empty() &&
+               !music_player_.IsBusy()) {
+        // 队列还有歌：继续播放下一首。
+        PlayNextMusicFromQueue();
     }
 
     auto& board = Board::GetInstance();
@@ -1276,15 +1285,17 @@ bool Application::StartMusic(std::string audio_url) {
         ESP_LOGW(TAG, "Invalid music url: %s", audio_url.c_str());
         return false;
     }
-    if (music_player_.IsBusy()) {
-        ESP_LOGW(TAG, "Ignoring music request: player busy");
-        return false;
-    }
-
-    // MCP 工具回调运行在协议线程；记录待播放地址并回到主任务处理。
-    // 不立即启动：此时通常正处于 Speaking（TTS 播报“正在播放…”），
-    // 需要等这段 TTS 结束、设备回到 Idle/Listening 后再接管音频输出。
+    // 不再因「正在播放」而拒绝：改为追加到播放队列，实现多曲连播。
+    // MCP 工具回调运行在协议线程，统一回到主任务处理。
     Schedule([this, url = std::move(audio_url)]() mutable {
+        if (music_player_.IsBusy() || !pending_music_url_.empty() ||
+            !music_queue_.empty()) {
+            // 已有音乐在播放或排队：追加到队尾。
+            music_queue_.push_back(std::move(url));
+            ESP_LOGI(TAG, "Music queued, queue length=%u",
+                     static_cast<unsigned>(music_queue_.size()));
+            return;
+        }
         pending_music_url_ = std::move(url);
         TryStartPendingMusic();
     });
@@ -1318,6 +1329,7 @@ void Application::TryStartPendingMusic() {
 
     std::string url = std::move(pending_music_url_);
     pending_music_url_.clear();
+    current_music_url_ = url;
 
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
@@ -1352,6 +1364,10 @@ void Application::TryStartPendingMusic() {
 }
 
 void Application::StopMusic() {
+    // 用户明确停止：清空整个队列，而不只是当前曲目。
+    music_queue_.clear();
+    pending_music_url_.clear();
+    current_music_url_.clear();
     if (!music_player_.IsBusy()) {
         return;
     }
@@ -1372,7 +1388,85 @@ void Application::HandleMusicFinished(uint32_t playback_id, bool success) {
     }
     ESP_LOGI(TAG, "Music playback %lu %s", static_cast<unsigned long>(playback_id),
              success ? "completed" : "failed");
-    StopMusic();
+    // 当前曲目结束：先停掉播放器，再尝试续播队列中的下一首。
+    music_player_.Stop();
+    audio_service_.ResetDecoder();
+    current_music_url_.clear();
+    if (!music_queue_.empty()) {
+        PlayNextMusicFromQueue();
+        return;
+    }
+    // 队列已空，收尾并回到低功耗。
+    auto& board = Board::GetInstance();
+    board.GetDisplay()->SetChatMessage("assistant", "");
+    if (GetDeviceState() == kDeviceStateIdle) {
+        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    }
+    ESP_LOGI(TAG, "Music queue finished");
+}
+
+void Application::PlayNextMusicFromQueue() {
+    if (music_queue_.empty()) {
+        return;
+    }
+    if (music_player_.IsBusy()) {
+        return;
+    }
+    if (GetDeviceState() != kDeviceStateIdle) {
+        return;
+    }
+
+    std::string url = std::move(music_queue_.front());
+    music_queue_.pop_front();
+    current_music_url_ = url;
+
+    uint32_t playback_id = ++music_playback_id_;
+    if (playback_id == 0) {
+        playback_id = ++music_playback_id_;
+    }
+
+    bool started = music_player_.Start(
+        std::move(url), playback_id,
+        [this](uint32_t id, bool success) {
+            Schedule([this, id, success]() { HandleMusicFinished(id, success); });
+        });
+    if (!started) {
+        ESP_LOGE(TAG, "Failed to start next music, dropping it");
+        // 跳过这一首，继续尝试后面的。
+        Schedule([this]() { PlayNextMusicFromQueue(); });
+        return;
+    }
+    ESP_LOGI(TAG, "Music playback started, id=%lu, remaining=%u",
+             static_cast<unsigned long>(playback_id),
+             static_cast<unsigned>(music_queue_.size()));
+}
+
+void Application::NextMusic() {
+    Schedule([this]() {
+        if (music_queue_.empty() && !music_player_.IsBusy()) {
+            ESP_LOGW(TAG, "NextMusic: nothing to play");
+            return;
+        }
+        music_player_.Stop();
+        audio_service_.ResetDecoder();
+        current_music_url_.clear();
+        if (GetDeviceState() != kDeviceStateIdle) {
+            // 由状态切换回调里再次尝试；这里只保证播放器已停。
+            return;
+        }
+        PlayNextMusicFromQueue();
+    });
+}
+
+int Application::MusicQueueLength() const {
+    int n = static_cast<int>(music_queue_.size());
+    if (music_player_.IsActive()) {
+        n += 1;
+    }
+    if (!pending_music_url_.empty()) {
+        n += 1;
+    }
+    return n;
 }
 
 bool Application::IsMusicPlaying() const { return music_player_.IsActive(); }

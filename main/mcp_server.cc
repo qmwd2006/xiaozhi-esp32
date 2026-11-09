@@ -137,10 +137,27 @@ void McpServer::AddCommonTools() {
             });
 
     AddTool("self.music.stop",
-            "Stop the music currently playing on the device.",
+            "Stop music playback on the device and clear the play queue.",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 Application::GetInstance().StopMusic();
                 return true;
+            });
+
+    AddTool("self.music.next",
+            "Skip to the next song in the play queue.",
+            PropertyList(), [](const PropertyList& properties) -> ReturnValue {
+                Application::GetInstance().NextMusic();
+                return true;
+            });
+
+    AddTool("self.music.status",
+            "Report whether music is playing and how many songs remain in the queue.",
+            PropertyList(), [](const PropertyList& properties) -> ReturnValue {
+                auto& app = Application::GetInstance();
+                cJSON* json = cJSON_CreateObject();
+                cJSON_AddBoolToObject(json, "playing", app.IsMusicPlaying());
+                cJSON_AddNumberToObject(json, "queue_length", app.MusicQueueLength());
+                return json;
             });
 
     // Restore the original tools list to the end of the tools list

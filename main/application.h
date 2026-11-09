@@ -121,9 +121,14 @@ public:
     AudioService& GetAudioService() { return audio_service_; }
 
     // 播放一个音频直链（MP3），用于设备端音乐播放。仅当设备空闲时可用。
+    // 若当前正在播放，则把 URL 追加到播放队列，当前曲目结束后自动续播。
     bool StartMusic(std::string audio_url);
     void StopMusic();
+    // 跳过当前曲目，立即播放队列中的下一首。
+    void NextMusic();
     bool IsMusicPlaying() const;
+    // 当前播放队列中剩余（含正在播放）的曲目数。
+    int MusicQueueLength() const;
     
     /**
      * Reset protocol resources (thread-safe)
@@ -153,6 +158,10 @@ private:
     MusicPlayer music_player_;
     uint32_t music_playback_id_ = 0;
     std::string pending_music_url_;
+    // 待播放队列：StartMusic 在播放中时追加，播完自动续播。
+    std::deque<std::string> music_queue_;
+    // 正在播放的曲目 URL（用于队列长度统计与续播去重）。
+    std::string current_music_url_;
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
@@ -189,6 +198,8 @@ private:
     void HandleNotificationFinished(uint32_t playback_id, bool success);
     void HandleMusicFinished(uint32_t playback_id, bool success);
     void TryStartPendingMusic();
+    // 尝试从 music_queue_ 取出下一首开始播放（主任务线程调用）。
+    void PlayNextMusicFromQueue();
 
     // Activation task (runs in background)
     void ActivationTask();
