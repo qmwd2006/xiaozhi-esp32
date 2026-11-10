@@ -61,6 +61,7 @@ class McpServerTest(unittest.TestCase):
                     bool UpgradeFirmware(const std::string&) { std::abort(); }
                     void ForceOtaCheck() {}
                     bool StartMusic(std::string) { return true; }
+                    bool PlayMusicNow(std::string) { return true; }
                     void StopMusic() {}
                     void NextMusic() {}
                     void PrevMusic() {}
