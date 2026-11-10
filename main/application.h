@@ -191,6 +191,10 @@ private:
     bool music_stop_requested_ = false;
     // 主动停止后待接续播放的 URL（用于 play_url 的立即切歌）。
     std::string music_replace_url_;
+    // 因对话（聆听/TTS）打断而自动暂停；回到空闲时自动恢复。
+    bool music_paused_by_dialog_ = false;
+    // 用户显式暂停（self.music.pause）；此标记存在时不自动恢复。
+    bool music_user_paused_ = false;
     // 循环模式：kOff 播完队列即停；kList 队列循环；kOne 单曲循环。
     MusicRepeatMode music_repeat_mode_ = MusicRepeatMode::kOff;
     // 最近一次自然播完的曲目 URL（单曲循环时重新入队）。

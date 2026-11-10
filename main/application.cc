@@ -1028,23 +1028,30 @@ void Application::HandleStateChangedEvent() {
     // the Listening case below re-arms it when needed.
     pending_listening_start_ = false;
 
-    // 音乐只在空闲态播放。一旦进入其它状态（服务器 TTS、聆听、连接等），
-    // 立即停止当前曲目，保证同一时刻只有一个音频输出者；
-    // 但保留播放队列，回到 Idle 后自动续播（多曲连播）。
-    if (new_state != kDeviceStateIdle && music_player_.IsBusy()) {
-        // 标记为「主动停止」，避免 HandleMusicFinished 误以为自然播完而续播。
-        music_stop_requested_ = true;
-        music_replace_url_.clear();
-        music_player_.Stop();
+    // 音乐只在空闲态输出。进入其它状态（聆听/服务器 TTS/连接）时「暂停」而非
+    // 「停止」：保留 HTTP 连接、解码器状态与播放位置，回到空闲后自动续播。
+    // 这样用户说「暂停/继续」以及对话打断后的恢复都能真正起作用。
+    if (new_state != kDeviceStateIdle && music_player_.IsBusy() &&
+        !music_player_.IsPaused()) {
+        music_paused_by_dialog_ = true;
+        music_player_.Pause();
         audio_service_.ResetDecoder();
-        current_music_url_.clear();
-        ESP_LOGI(TAG, "Music paused by state change, queue kept (%u)",
-                 static_cast<unsigned>(music_queue_.size()));
+        ESP_LOGI(TAG, "Music auto-paused by state change (%d)", static_cast<int>(new_state));
     }
-    if (new_state == kDeviceStateIdle && !music_queue_.empty() &&
-        !music_player_.IsBusy()) {
-        // 回到空闲态且队列还有歌：继续播放下一首。
-        PlayNextMusicFromQueue();
+    if (new_state == kDeviceStateIdle) {
+        if (music_paused_by_dialog_ && music_player_.IsActive()) {
+            // 对话结束：若用户没有显式暂停，则恢复被打断的音乐。
+            music_paused_by_dialog_ = false;
+            if (!music_user_paused_) {
+                music_player_.Resume();
+                ESP_LOGI(TAG, "Music auto-resumed after returning to idle");
+            } else {
+                ESP_LOGI(TAG, "Music stays paused (user requested pause)");
+            }
+        } else if (!music_queue_.empty() && !music_player_.IsBusy()) {
+            // 队列还有歌且当前无播放：播放下一首。
+            PlayNextMusicFromQueue();
+        }
     }
 
     auto& board = Board::GetInstance();
@@ -1291,6 +1298,8 @@ void Application::StopMusic() {
     music_history_.clear();
     current_music_url_.clear();
     music_replace_url_.clear();
+    music_paused_by_dialog_ = false;
+    music_user_paused_ = false;
     if (!music_player_.IsBusy()) {
         music_stop_requested_ = false;
         return;
@@ -1423,6 +1432,8 @@ void Application::PlayNextMusicFromQueue() {
 bool Application::StartMusicNow(const std::string& url) {
     current_music_url_ = url;
     finished_music_url_ = url;
+    music_user_paused_ = false;
+    music_paused_by_dialog_ = false;
 
     uint32_t playback_id = ++music_playback_id_;
     if (playback_id == 0) {
@@ -1494,12 +1505,16 @@ int Application::MusicQueueLength() const {
 }
 
 void Application::PauseMusic() {
-    // 直接操作播放器：暂停只停止推帧，不改变设备状态，避免触发状态机逻辑。
+    music_user_paused_ = true;
+    music_paused_by_dialog_ = false;
     music_player_.Pause();
+    ESP_LOGI(TAG, "Music paused by user");
 }
 
 void Application::ResumeMusic() {
+    music_user_paused_ = false;
     music_player_.Resume();
+    ESP_LOGI(TAG, "Music resumed by user");
 }
 
 bool Application::SeekMusic(int seconds) { return music_player_.Seek(seconds); }
