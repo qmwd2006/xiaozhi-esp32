@@ -159,6 +159,10 @@ public:
      */
     void ResetProtocol();
 
+    // 立即触发一次 OTA 检查（调试用，通过 MCP self.ota_check 调用）。
+    // 线程安全：内部通过 Schedule 切回主任务执行。
+    void ForceOtaCheck();
+
 private:
     Application();
     ~Application();
@@ -247,6 +251,26 @@ private:
     // Helper methods
     void CheckAssetsVersion();
     void CheckNewVersion();
+    // 定时检查 OTA（空闲态下），用于远程推送固件更新。
+    void PeriodicOtaCheck();
+    // 决定是否发起一次检查；force=true 时忽略空闲态与间隔限制。
+    void RunOtaCheck(bool force);
+    // 独立任务入口：在后台执行 HTTP 检查，避免阻塞主事件循环。
+    static void OtaCheckTaskEntry(void* arg);
+    void RunOtaCheckTask();
+    // 独立任务入口：执行固件下载与写入，避免阻塞主事件循环。
+    static void OtaUpgradeTaskEntry(void* arg);
+    // 记录已开始升级，避免重复触发。
+    bool ota_upgrade_started_ = false;
+    // 是否有检查任务正在运行，避免并发请求。
+    bool ota_check_in_progress_ = false;
+    // 待升级的固件信息（由主任务写入，升级任务读取）。
+    std::string ota_upgrade_url_;
+    std::string ota_upgrade_version_;
+    // 下次允许检查的时间戳（秒，单调时钟）。
+    int64_t next_ota_check_seconds_ = 0;
+    // 失败后的退避秒数，失败后退避翻倍。
+    int ota_retry_backoff_seconds_ = 0;
     void InitializeProtocol();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);

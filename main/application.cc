@@ -22,6 +22,10 @@
 
 #define TAG "Application"
 
+namespace {
+constexpr int kOtaCheckIntervalSeconds = 300;
+}  // namespace
+
 Application::Application() : notify_player_(audio_service_), music_player_(audio_service_) {
     event_group_ = xEventGroupCreate();
 
@@ -286,6 +290,8 @@ void Application::Run() {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
+            // 空闲时按间隔检查 OTA，便于远程推送固件（无需手动重启）。
+            PeriodicOtaCheck();
 
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
@@ -303,6 +309,9 @@ void Application::Run() {
 
 void Application::HandleNetworkConnectedEvent() {
     ESP_LOGI(TAG, "Network connected");
+    // 网络恢复后立即允许一次 OTA 检查，无需等待退避。
+    next_ota_check_seconds_ = 0;
+    ota_retry_backoff_seconds_ = 0;
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
@@ -373,6 +382,9 @@ void Application::HandleActivationDoneEvent() {
 
     // Release OTA object after activation is complete
     ota_.reset();
+    // 启动时已检查过版本，首次定时检查延后一个周期。
+    next_ota_check_seconds_ =
+        esp_timer_get_time() / 1000000 + kOtaCheckIntervalSeconds;
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 
@@ -555,6 +567,121 @@ void Application::CheckNewVersion() {
             }
         }
     }
+}
+
+void Application::ForceOtaCheck() {
+    ESP_LOGI(TAG, "Force OTA check requested");
+    Schedule([this]() { RunOtaCheck(/*force=*/true); });
+}
+
+void Application::PeriodicOtaCheck() {
+    // 只在空闲态且无音频播放时检查，避免打断对话/播放。
+    if (GetDeviceState() != kDeviceStateIdle || music_player_.IsBusy() ||
+        notify_player_.IsBusy()) {
+        return;
+    }
+    RunOtaCheck(/*force=*/false);
+}
+
+void Application::RunOtaCheck(bool force) {
+    if (ota_upgrade_started_ || ota_check_in_progress_) {
+        return;
+    }
+    if (!force && GetDeviceState() != kDeviceStateIdle) {
+        return;
+    }
+    const int64_t now = esp_timer_get_time() / 1000000;
+    if (!force && now < next_ota_check_seconds_) {
+        return;
+    }
+    // 先占位，防止重复创建检查任务；真正的状态更新在任务完成后的主任务回调里。
+    ota_check_in_progress_ = true;
+    if (xTaskCreate(&Application::OtaCheckTaskEntry, "ota_check", 8192, this, 2, nullptr) !=
+        pdPASS) {
+        ESP_LOGE(TAG, "Failed to create OTA check task");
+        ota_check_in_progress_ = false;
+    }
+}
+
+void Application::OtaCheckTaskEntry(void* arg) {
+    static_cast<Application*>(arg)->RunOtaCheckTask();
+    vTaskDelete(nullptr);
+}
+
+void Application::RunOtaCheckTask() {
+    // 使用局部 Ota 对象，避免与激活流程共享状态，也不依赖 ota_ 是否已释放。
+    Ota ota;
+    auto check = ota.CheckVersion();
+    if (!check) {
+        ESP_LOGW(TAG, "Periodic OTA check failed: %s", check.error().ToString().c_str());
+        Schedule([this]() {
+            ota_check_in_progress_ = false;
+            if (ota_retry_backoff_seconds_ == 0) {
+                ota_retry_backoff_seconds_ = 60;
+            } else {
+                ota_retry_backoff_seconds_ = std::min(ota_retry_backoff_seconds_ * 2, 3600);
+            }
+            next_ota_check_seconds_ = esp_timer_get_time() / 1000000 + ota_retry_backoff_seconds_;
+            ESP_LOGW(TAG, "Next OTA check in %d s", ota_retry_backoff_seconds_);
+        });
+        return;
+    }
+
+    const bool has_new_version = ota.HasNewVersion();
+    const std::string url = ota.GetFirmwareUrl();
+    const std::string version = ota.GetFirmwareVersion();
+    if (has_new_version) {
+        ESP_LOGI(TAG, "Periodic OTA: new firmware %s available", version.c_str());
+    }
+
+    // 所有成员状态都在主任务更新，避免与主循环竞争。
+    Schedule([this, has_new_version, url, version]() {
+        ota_check_in_progress_ = false;
+        ota_retry_backoff_seconds_ = 0;
+        next_ota_check_seconds_ =
+            esp_timer_get_time() / 1000000 + kOtaCheckIntervalSeconds;
+        if (!has_new_version) {
+            return;
+        }
+        // 检查期间用户可能开始对话/播放，避免此时打断。
+        if (GetDeviceState() != kDeviceStateIdle || music_player_.IsBusy() ||
+            notify_player_.IsBusy()) {
+            ESP_LOGI(TAG, "Skip OTA upgrade: device is busy");
+            return;
+        }
+        ota_upgrade_started_ = true;
+        ota_upgrade_url_ = url;
+        ota_upgrade_version_ = version;
+        // 升级流程会播放提示音并通过 Schedule 更新进度，必须在独立任务执行，
+        // 否则进度回调无法在主循环里运行。
+        if (xTaskCreate(&Application::OtaUpgradeTaskEntry, "ota_upgrade", 8192, this, 3,
+                        nullptr) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create OTA upgrade task");
+            ota_upgrade_started_ = false;
+        }
+    });
+}
+
+void Application::OtaUpgradeTaskEntry(void* arg) {
+    auto* app = static_cast<Application*>(arg);
+    const bool success = app->UpgradeFirmware(app->ota_upgrade_url_, app->ota_upgrade_version_);
+    // 成功后 UpgradeFirmware 已重启，不会返回 true；失败时恢复允许再次尝试。
+    app->Schedule([app, success]() {
+        app->ota_upgrade_started_ = false;
+        app->ota_upgrade_url_.clear();
+        app->ota_upgrade_version_.clear();
+        app->ota_retry_backoff_seconds_ = 0;
+        app->next_ota_check_seconds_ =
+            esp_timer_get_time() / 1000000 + kOtaCheckIntervalSeconds;
+        if (!success) {
+            ESP_LOGW(TAG, "Periodic OTA upgrade failed");
+            // 升级失败时 UpgradeFirmware 不会复位状态，需回到空闲态，
+            // 否则设备会卡在 Upgrading，后续定时检查也不会再触发。
+            app->SetDeviceState(kDeviceStateIdle);
+            app->DismissAlert();
+        }
+    });
+    vTaskDelete(nullptr);
 }
 
 void Application::InitializeProtocol() {

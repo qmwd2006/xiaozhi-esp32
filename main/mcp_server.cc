@@ -267,6 +267,16 @@ void McpServer::AddUserOnlyTools() {
                         return true;
                     });
 
+    // 立即检查一次 OTA（调试用，便于远程推送固件）。
+    AddUserOnlyTool("self.ota_check",
+                    "Check for firmware update now and install it if available.",
+                    PropertyList(),
+                    [this](const PropertyList& properties) -> ReturnValue {
+                        auto& app = Application::GetInstance();
+                        app.ForceOtaCheck();
+                        return true;
+                    });
+
     // Firmware upgrade
     AddUserOnlyTool(
         "self.upgrade_firmware",
