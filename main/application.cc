@@ -1201,11 +1201,14 @@ void Application::HandleStateChangedEvent() {
         ESP_LOGI(TAG, "Music stopped for dialog at %ds (releasing HTTP)",
                  music_resume_position_);
     }
+    // 有待播放请求时，每个状态变化都尝试推进一次（Speaking -> Listening
+    // 也需要处理，否则会一直停在 Listening 永远不播）。
+    if (!pending_music_url_.empty()) {
+        TryStartPendingMusic();
+    }
     if (new_state == kDeviceStateIdle) {
         // 优先处理「Speaking 期间收到的播放请求」，它比打断续播更新。
-        if (!pending_music_url_.empty()) {
-            TryStartPendingMusic();
-        } else if (music_paused_by_dialog_) {
+        if (pending_music_url_.empty() && music_paused_by_dialog_) {
             // 对话结束：若用户没有显式暂停，则从打断位置续播。
             music_paused_by_dialog_ = false;
             if (!music_user_paused_ && !music_resume_url_.empty()) {
@@ -1530,17 +1533,45 @@ bool Application::PlayMusicNow(std::string audio_url) {
 }
 
 void Application::TryStartPendingMusic() {
-    if (pending_music_url_.empty()) {
+    if (pending_music_url_.empty() || starting_pending_music_) {
         return;
     }
-    if (GetDeviceState() != kDeviceStateIdle) {
+    if (music_player_.IsBusy() || notify_player_.IsBusy()) {
         return;
     }
-    if (notify_player_.IsBusy()) {
+
+    const auto state = GetDeviceState();
+    if (state == kDeviceStateSpeaking) {
+        // TTS 还在播报（“正在播放…”），等它结束。
         return;
     }
+    if (state == kDeviceStateListening) {
+        // 自动聆听模式下 TTS 结束后会停在 Listening，不会自动回 Idle。
+        // 注意：WebSocket 的 CloseAudioChannel() 只是重置传输层，
+        // 不会触发 OnAudioChannelClosed 回调，所以这里必须显式切状态，
+        // 否则待播请求会永远卡在 Listening。
+        ESP_LOGI(TAG, "Deferred music: leaving Listening to start playback");
+        if (protocol_ != nullptr && protocol_->IsAudioChannelOpened()) {
+            protocol_->CloseAudioChannel();
+        }
+        starting_pending_music_ = true;
+        const bool switched = SetDeviceState(kDeviceStateIdle);
+        starting_pending_music_ = false;
+        if (!switched) {
+            return;
+        }
+        // 状态切换会再次进入本函数（经由 HandleStateChangedEvent）。
+        return;
+    }
+    if (state != kDeviceStateIdle) {
+        return;
+    }
+
     std::string url = std::move(pending_music_url_);
     pending_music_url_.clear();
+    auto& board = Board::GetInstance();
+    board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    audio_service_.EnableVoiceProcessing(false);
     ESP_LOGI(TAG, "Starting deferred music request");
     if (!StartMusicNow(url)) {
         ESP_LOGE(TAG, "Failed to start deferred music");

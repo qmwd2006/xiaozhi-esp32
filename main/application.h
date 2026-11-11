@@ -198,6 +198,8 @@ private:
     std::string music_resume_url_;
     // 等待设备回到 Idle 后再播放的曲目（Speaking 期间收到播放请求时使用）。
     std::string pending_music_url_;
+    // 防止 TryStartPendingMusic 在状态切换回调里递归触发。
+    bool starting_pending_music_ = false;
     // 用户显式暂停（self.music.pause）；此标记存在时不自动恢复。
     bool music_user_paused_ = false;
     // 循环模式：kOff 播完队列即停；kList 队列循环；kOne 单曲循环。
