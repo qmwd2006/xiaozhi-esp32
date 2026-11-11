@@ -25,7 +25,11 @@ public:
     ~MusicPlayer();
 
     // 开始播放。playback_id 用于区分多次播放，必须非 0。
+    // 若已有 worker 在运行，本调用会中止当前曲目并把本次请求排队，
+    // 由旧 worker 退出后自动开始新曲目（避免「停止后立刻开始」的竞态）。
+    // 只有 URL 非法或任务创建失败才返回 false。
     bool Start(std::string audio_url, uint32_t playback_id, FinishedCallback finished_callback);
+    // 停止播放并丢弃任何已排队的待播放请求。
     void Stop();
 
     // 暂停/恢复：暂停时停止向播放队列推帧，但保留 HTTP 连接与解码状态。
@@ -64,6 +68,11 @@ private:
     bool playback_drained_ = false;
     bool completion_reported_ = false;
 
+    // 等待旧 worker 退出后再播放的曲目（换歌时使用，避免 Start 失败）。
+    std::string pending_url_;
+    FinishedCallback pending_callback_;
+    uint32_t pending_playback_id_ = 0;
+
     // 进度跟踪（字节与码率）。
     int64_t total_bytes_ = 0;   // 文件总字节（来自 Content-Range/Length），未知为 0
     int64_t current_byte_ = 0;  // 已消费的绝对字节偏移
@@ -74,6 +83,8 @@ private:
 
     static void WorkerEntry(void* arg);
     void WorkerTask();
+    // 启动一个新 worker；调用方需已持有 mutex_ 且已写入播放参数。
+    bool StartWorkerLocked();
     // 若处于暂停状态则阻塞，直到恢复/取消/停止。
     void WaitIfPaused();
     bool IsCancelled(uint32_t playback_id) const;

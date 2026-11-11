@@ -161,17 +161,13 @@ bool MusicPlayer::Start(std::string audio_url, uint32_t playback_id,
         return false;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (active_ || worker_running_) {
-            ESP_LOGW(TAG, "Music player is busy");
-            return false;
-        }
+    std::unique_lock<std::mutex> lock(mutex_);
+
+    auto apply_request = [&]() {
         audio_url_ = std::move(audio_url);
         finished_callback_ = std::move(finished_callback);
         playback_id_ = playback_id;
         active_ = true;
-        worker_running_ = true;
         cancelled_ = false;
         paused_ = false;
         http_finished_ = false;
@@ -182,16 +178,43 @@ bool MusicPlayer::Start(std::string audio_url, uint32_t playback_id,
         bitrate_bps_ = 0;
         seek_target_byte_ = -1;
         seek_pending_ = false;
+    };
+
+    if (worker_running_) {
+        // 旧 worker 还在跑：把本次请求排队并取消旧曲目。
+        // 旧 worker 退出时会自动拉起新曲目，避免 Stop/Start 竞态。
+        ESP_LOGI(TAG, "Switching track while worker is running, queueing request");
+        pending_url_ = std::move(audio_url);
+        pending_callback_ = std::move(finished_callback);
+        pending_playback_id_ = playback_id;
+        cancelled_ = true;
+        active_ = false;
+        paused_ = false;
+        pause_cv_.notify_all();
+        // 持锁清空播放队列：旧 worker 在推帧前会检查 cancelled_ 而退出，
+        // 而新 worker 要等旧 worker 退出（需要本锁）才会创建，
+        // 因此这里不会误删新曲目的帧。AudioService 的回调在释放自身锁后
+        // 才调用，不会与 mutex_ 形成反向依赖。
+        audio_service_.ResetDecoder();
+        return true;
     }
 
+    apply_request();
+    worker_running_ = true;
+    if (!StartWorkerLocked()) {
+        active_ = false;
+        worker_running_ = false;
+        cancelled_ = true;
+        return false;
+    }
+    return true;
+}
+
+bool MusicPlayer::StartWorkerLocked() {
     BaseType_t created = xTaskCreate(WorkerEntry, "music_http", kMusicTaskStackSize, this,
                                      kMusicTaskPriority, &task_handle_);
     if (created != pdPASS) {
         ESP_LOGE(TAG, "Failed to create music task");
-        std::lock_guard<std::mutex> lock(mutex_);
-        active_ = false;
-        worker_running_ = false;
-        cancelled_ = true;
         task_handle_ = nullptr;
         return false;
     }
@@ -204,6 +227,10 @@ void MusicPlayer::Stop() {
         cancelled_ = true;
         active_ = false;
         paused_ = false;
+        // 丢弃排队中的换曲请求：Stop 是「真的不播了」。
+        pending_url_.clear();
+        pending_callback_ = nullptr;
+        pending_playback_id_ = 0;
         // 保留 finished_callback_：worker 退出时会回调，
         // 调用方据此决定是否接续播放下一首（避免 Stop 后立即 Start 的竞态）。
     }
@@ -577,11 +604,35 @@ void MusicPlayer::WorkerTask() {
     FinishedCallback callback;
     uint32_t completed_playback_id = 0;
     bool report_success = false;
+    bool switch_to_pending = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         worker_running_ = false;
         task_handle_ = nullptr;
-        if (playback_id == playback_id_) {
+        if (!pending_url_.empty()) {
+            // 有排队的换曲请求：直接接管参数并重启 worker，
+            // 不向调用方汇报「结束」，避免上层误以为播放已终止。
+            ESP_LOGI(TAG, "Starting queued track after worker exit");
+            audio_url_ = std::move(pending_url_);
+            pending_url_.clear();
+            finished_callback_ = std::move(pending_callback_);
+            pending_callback_ = nullptr;
+            playback_id_ = pending_playback_id_;
+            pending_playback_id_ = 0;
+            active_ = true;
+            worker_running_ = true;
+            cancelled_ = false;
+            paused_ = false;
+            http_finished_ = false;
+            playback_drained_ = false;
+            completion_reported_ = false;
+            total_bytes_ = 0;
+            current_byte_ = 0;
+            bitrate_bps_ = 0;
+            seek_target_byte_ = -1;
+            seek_pending_ = false;
+            switch_to_pending = true;
+        } else if (playback_id == playback_id_) {
             if (cancelled_) {
                 // 被主动停止：通知调用方，以便接续播放（下一曲/替换曲目）。
                 completed_playback_id = playback_id_;
@@ -602,6 +653,39 @@ void MusicPlayer::WorkerTask() {
                 }
             }
         }
+    }
+    if (switch_to_pending) {
+        // 与 Start() 一致：持锁创建任务。
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!pending_url_.empty()) {
+            // 竞态：在这两步之间又有新的换曲请求，直接接管它，
+            // 避免丢失请求导致「下一首」失效。
+            ESP_LOGI(TAG, "Newer track queued during switch, taking it");
+            audio_url_ = std::move(pending_url_);
+            pending_url_.clear();
+            finished_callback_ = std::move(pending_callback_);
+            pending_callback_ = nullptr;
+            playback_id_ = pending_playback_id_;
+            pending_playback_id_ = 0;
+            active_ = true;
+            cancelled_ = false;
+            paused_ = false;
+            http_finished_ = false;
+            playback_drained_ = false;
+            completion_reported_ = false;
+        }
+        if (cancelled_ || !active_) {
+            // 期间被 Stop() 撤销：清理状态，避免 worker_running_ 卡在 true。
+            worker_running_ = false;
+            active_ = false;
+            return;
+        }
+        if (!StartWorkerLocked()) {
+            ESP_LOGE(TAG, "Failed to start queued track");
+            worker_running_ = false;
+            active_ = false;
+        }
+        return;
     }
     if (callback) {
         callback(completed_playback_id, report_success);
