@@ -1202,7 +1202,10 @@ void Application::HandleStateChangedEvent() {
                  music_resume_position_);
     }
     if (new_state == kDeviceStateIdle) {
-        if (music_paused_by_dialog_) {
+        // 优先处理「Speaking 期间收到的播放请求」，它比打断续播更新。
+        if (!pending_music_url_.empty()) {
+            TryStartPendingMusic();
+        } else if (music_paused_by_dialog_) {
             // 对话结束：若用户没有显式暂停，则从打断位置续播。
             music_paused_by_dialog_ = false;
             if (!music_user_paused_ && !music_resume_url_.empty()) {
@@ -1474,9 +1477,11 @@ void Application::StopMusic() {
     music_repeat_mode_ = MusicRepeatMode::kOff;
     music_paused_by_dialog_ = false;
     music_user_paused_ = false;
-    // 用户明确停止：作废「对话打断后续播」的位置，避免回到空闲又自己响起来。
+    // 用户明确停止：作废「对话打断后续播」的位置与待播请求，
+    // 避免回到空闲又自己响起来。
     music_resume_url_.clear();
     music_resume_position_ = 0;
+    pending_music_url_.clear();
     // 队列与历史已清空，worker 退出后的 HandleMusicFinished 不会续播，
     // 因此无需额外的「主动停止」标记（该标记在切歌时容易残留）。
     music_player_.Stop();
@@ -1499,8 +1504,21 @@ bool Application::PlayMusicNow(std::string audio_url) {
         // 立即播放：清空队列与历史，并替换当前曲目。
         music_queue_.clear();
         music_history_.clear();
+        pending_music_url_.clear();
         // 丢弃旧曲目残留在播放队列里的 PCM，避免串音。
         audio_service_.ResetDecoder();
+        // 唤醒对话期间通常处于 Speaking（播报“正在播放…”），此刻起播会被
+        // 状态切换立刻打断。改为记录待播地址，等回到 Idle 再开始。
+        if (GetDeviceState() != kDeviceStateIdle) {
+            ESP_LOGI(TAG, "Music request deferred until idle (state=%d)",
+                     static_cast<int>(GetDeviceState()));
+            pending_music_url_ = std::move(url);
+            // 旧曲目仍在播的话先停掉，避免与新请求抢音频输出。
+            if (music_player_.IsBusy()) {
+                music_player_.Stop();
+            }
+            return;
+        }
         // MusicPlayer::Start 在旧 worker 仍在运行时会自动排队换曲，
         // 不需要先 Stop（先 Stop 再 Start 会因 worker_running_ 而失败）。
         if (!StartMusicNow(url)) {
@@ -1509,6 +1527,25 @@ bool Application::PlayMusicNow(std::string audio_url) {
         }
     });
     return true;
+}
+
+void Application::TryStartPendingMusic() {
+    if (pending_music_url_.empty()) {
+        return;
+    }
+    if (GetDeviceState() != kDeviceStateIdle) {
+        return;
+    }
+    if (notify_player_.IsBusy()) {
+        return;
+    }
+    std::string url = std::move(pending_music_url_);
+    pending_music_url_.clear();
+    ESP_LOGI(TAG, "Starting deferred music request");
+    if (!StartMusicNow(url)) {
+        ESP_LOGE(TAG, "Failed to start deferred music");
+        StopMusic();
+    }
 }
 
 void Application::HandleMusicFinished(uint32_t playback_id, bool success) {
@@ -1609,17 +1646,20 @@ bool Application::StartMusicNow(const std::string& url) {
 
 void Application::NextMusic() {
     Schedule([this]() {
+        // 用户明确切歌：作废「对话打断后续播」的位置，
+        // 否则回到 idle 时会被续播逻辑抢走，表现为「下一首不播放」。
+        music_paused_by_dialog_ = false;
+        music_resume_url_.clear();
+        music_resume_position_ = 0;
         if (music_queue_.empty()) {
-            if (!music_player_.IsBusy()) {
-                ESP_LOGW(TAG, "NextMusic: nothing to play");
-                return;
-            }
-            // 没有下一首：停止当前曲目。
-            StopMusic();
+            // 队列为空说明当前是「单曲播放」（play_url），没有已知的下一首。
+            // 此时绝不能 StopMusic：那会把音乐直接停掉，表现为「下一首不播放」。
+            // 交由上层（语音助手重新点歌）决定播什么，这里保持现状。
+            ESP_LOGW(TAG, "NextMusic: queue empty (single-track mode), keep playing");
             return;
         }
         if (GetDeviceState() != kDeviceStateIdle) {
-            // 对话/播报中：先停掉当前曲目，回到空闲态时由
+            // 对话/播报中：先停掉当前曲目（释放 HTTP），回到空闲态时由
             // HandleStateChangedEvent 接着播放队列里的下一首。
             if (!current_music_url_.empty()) {
                 music_history_.push_back(current_music_url_);
@@ -1630,7 +1670,8 @@ void Application::NextMusic() {
             }
             music_player_.Stop();
             audio_service_.ResetDecoder();
-            ESP_LOGI(TAG, "NextMusic deferred until idle");
+            ESP_LOGI(TAG, "NextMusic deferred until idle, queue=%u",
+                     static_cast<unsigned>(music_queue_.size()));
             return;
         }
         // 直接把下一首交给 Start：MusicPlayer 会在旧 worker 退出后自动接续，
@@ -1642,6 +1683,10 @@ void Application::NextMusic() {
 
 void Application::PrevMusic() {
     Schedule([this]() {
+        // 用户明确切歌：作废打断续播状态。
+        music_paused_by_dialog_ = false;
+        music_resume_url_.clear();
+        music_resume_position_ = 0;
         if (music_history_.empty()) {
             ESP_LOGW(TAG, "PrevMusic: no history");
             return;

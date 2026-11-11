@@ -196,6 +196,8 @@ private:
     // 打断时记录的位置与曲目，用于回到空闲后续播。
     int music_resume_position_ = 0;
     std::string music_resume_url_;
+    // 等待设备回到 Idle 后再播放的曲目（Speaking 期间收到播放请求时使用）。
+    std::string pending_music_url_;
     // 用户显式暂停（self.music.pause）；此标记存在时不自动恢复。
     bool music_user_paused_ = false;
     // 循环模式：kOff 播完队列即停；kList 队列循环；kOne 单曲循环。
@@ -227,6 +229,9 @@ private:
     void HandleStopListeningEvent();
     void HandleNetworkConnectedEvent();
     void HandleAudioSendFailure();
+    // 设备处于 Speaking/Listening 时先记录待播地址，回到 Idle 后再真正开始，
+    // 避免音乐刚起播就被状态切换打断（TTS 播报“正在播放…”的常见场景）。
+    void TryStartPendingMusic();
     void HandleNetworkDisconnectedEvent();
     void HandleActivationDoneEvent();
     void HandleWakeWordDetectedEvent();
