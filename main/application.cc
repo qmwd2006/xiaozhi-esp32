@@ -1560,7 +1560,9 @@ void Application::TryStartPendingMusic() {
         if (!switched) {
             return;
         }
-        // 状态切换会再次进入本函数（经由 HandleStateChangedEvent）。
+        // 状态机是在本调用内同步通知监听器的，那一次回调被防重入标志挡掉了，
+        // 这里必须主动再推进一次，否则待播请求会永远停在队列里。
+        Schedule([this]() { TryStartPendingMusic(); });
         return;
     }
     if (state != kDeviceStateIdle) {
