@@ -178,6 +178,8 @@ bool MusicPlayer::Start(std::string audio_url, uint32_t playback_id,
         bitrate_bps_ = 0;
         seek_target_byte_ = -1;
         seek_pending_ = false;
+        pending_seek_seconds_ = -1;
+        skip_remaining_samples_ = 0;
     };
 
     if (worker_running_) {
@@ -265,13 +267,17 @@ bool MusicPlayer::IsPaused() const {
 
 bool MusicPlayer::Seek(int seconds) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!active_ || total_bytes_ <= 0 || bitrate_bps_ <= 0) {
-        ESP_LOGW(TAG, "Seek not supported yet (total=%lld bitrate=%d)",
-                 static_cast<long long>(total_bytes_), bitrate_bps_);
+    if (!active_) {
         return false;
     }
     if (seconds < 0) {
         seconds = 0;
+    }
+    // 刚启动时码率/总长尚未就绪：先记下目标秒数，等解析出头信息后再换算。
+    if (total_bytes_ <= 0 || bitrate_bps_ <= 0) {
+        pending_seek_seconds_ = seconds;
+        ESP_LOGI(TAG, "Seek deferred until bitrate known: %d s", seconds);
+        return true;
     }
     int64_t byte = static_cast<int64_t>(bitrate_bps_) / 8 * seconds;
     if (byte > total_bytes_) {
@@ -470,6 +476,40 @@ void MusicPlayer::WorkerTask() {
                             }
                         }
 
+                        // 跳转支持：丢弃目标位置之前的采样。
+                        // 在有损压缩里按时间精确对齐很难，这里按「采样数 = 秒数 ×
+                        // 输出采样率」做尽力而为的续播（误差在一个解码块内）。
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            int seek_seconds = -1;
+                            if (pending_seek_seconds_ >= 0) {
+                                seek_seconds = pending_seek_seconds_;
+                                pending_seek_seconds_ = -1;
+                            } else if (seek_pending_ && bitrate_bps_ > 0) {
+                                seek_seconds =
+                                    static_cast<int>(seek_target_byte_ * 8LL / bitrate_bps_);
+                                seek_pending_ = false;
+                                seek_target_byte_ = -1;
+                            }
+                            if (seek_seconds > 0) {
+                                const int rate = effective_rate > 0 ? effective_rate : 24000;
+                                // 累加而非覆盖：允许一次 seek 跨多个解码块。
+                                skip_remaining_samples_ +=
+                                    static_cast<int64_t>(seek_seconds) * rate;
+                            }
+                        }
+                        if (skip_remaining_samples_ > 0) {
+                            const int64_t available = static_cast<int64_t>(mono.size());
+                            if (skip_remaining_samples_ >= available) {
+                                // 整块都在跳转点之前：丢弃并继续等下一块。
+                                skip_remaining_samples_ -= available;
+                                return;
+                            }
+                            mono.erase(mono.begin(),
+                                       mono.begin() + skip_remaining_samples_);
+                            skip_remaining_samples_ = 0;
+                        }
+
                         // 按固定帧长切分后入队
                         const size_t frame_samples =
                             static_cast<size_t>(std::max(1, effective_rate * kTargetFrameMs / 1000));
@@ -631,6 +671,8 @@ void MusicPlayer::WorkerTask() {
             bitrate_bps_ = 0;
             seek_target_byte_ = -1;
             seek_pending_ = false;
+            pending_seek_seconds_ = -1;
+            skip_remaining_samples_ = 0;
             switch_to_pending = true;
         } else if (playback_id == playback_id_) {
             if (cancelled_) {

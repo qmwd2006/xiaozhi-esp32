@@ -80,6 +80,10 @@ private:
     // 待执行的跳转目标字节；<0 表示无。
     int64_t seek_target_byte_ = -1;
     bool seek_pending_ = false;
+    // 启动早期（码率未知）就请求的跳转秒数；拿到码率后再换算。
+    int pending_seek_seconds_ = -1;
+    // 还需丢弃的采样数（跨解码块累计，直到越过跳转点）。
+    int64_t skip_remaining_samples_ = 0;
 
     static void WorkerEntry(void* arg);
     void WorkerTask();

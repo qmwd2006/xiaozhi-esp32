@@ -254,13 +254,17 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_SEND_AUDIO) {
             while (auto packet = audio_service_.PopPacketFromSendQueue()) {
-                if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
+                bool sent = protocol_ && protocol_->SendAudio(std::move(packet));
+                if (sent) {
+                    audio_send_failures_ = 0;
+                } else {
                     // Drop the remaining packets. Leaving them in the queue would
                     // stall the Opus codec task (it waits for queue space), which in
                     // turn deadlocks the whole audio input pipeline, as no new
                     // MAIN_EVENT_SEND_AUDIO event would ever be triggered again.
                     while (audio_service_.PopPacketFromSendQueue())
                         ;
+                    HandleAudioSendFailure();
                     break;
                 }
             }
@@ -312,6 +316,7 @@ void Application::HandleNetworkConnectedEvent() {
     // 网络恢复后立即允许一次 OTA 检查，无需等待退避。
     next_ota_check_seconds_ = 0;
     ota_retry_backoff_seconds_ = 0;
+    audio_send_failures_ = 0;
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
@@ -335,6 +340,28 @@ void Application::HandleNetworkConnectedEvent() {
     // Update the status bar immediately to show the network state
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
+}
+
+void Application::HandleAudioSendFailure() {
+    // 发送失败通常意味着链路已坏（典型表现：TLS 发送超时、对端不响应）。
+    // 若不熔断，每帧音频都会重试并阻塞主循环，最终把设备拖死。
+    audio_send_failures_++;
+    if (audio_send_failures_ < kMaxConsecutiveAudioSendFailures) {
+        return;
+    }
+    ESP_LOGE(TAG, "Audio send failed %d times in a row, closing channel",
+             audio_send_failures_);
+    audio_send_failures_ = 0;
+    if (music_player_.IsBusy()) {
+        StopMusic();
+    }
+    audio_service_.ResetDecoder();
+    if (protocol_ != nullptr) {
+        protocol_->CloseAudioChannel();
+    }
+    if (GetDeviceState() != kDeviceStateIdle) {
+        SetDeviceState(kDeviceStateIdle);
+    }
 }
 
 void Application::HandleNetworkDisconnectedEvent() {
@@ -1158,20 +1185,37 @@ void Application::HandleStateChangedEvent() {
     // 音乐只在空闲态输出。进入其它状态（聆听/服务器 TTS/连接）时「暂停」而非
     // 「停止」：保留 HTTP 连接、解码器状态与播放位置，回到空闲后自动续播。
     // 这样用户说「暂停/继续」以及对话打断后的恢复都能真正起作用。
+    //
+    // 注意：这里必须真正 Stop 而不是 Pause。音乐走的是到流媒体服务的
+    // 独立 HTTP 连接；Pause 会一直占着该连接与解码器缓冲，对话期间设备还要
+    // 持续上传麦克风音频，两者叠加会挤占内存与网络，实测导致
+    // 「EspSsl send timeout」无限重试、主循环假死。
+    // 因此打断时释放音乐连接并记住位置，回到空闲后从该位置续播。
     if (new_state != kDeviceStateIdle && music_player_.IsBusy() &&
         !music_player_.IsPaused()) {
         music_paused_by_dialog_ = true;
-        music_player_.Pause();
+        music_resume_position_ = music_player_.PositionSeconds();
+        music_resume_url_ = current_music_url_;
+        music_player_.Stop();
         audio_service_.ResetDecoder();
-        ESP_LOGI(TAG, "Music auto-paused by state change (%d)", static_cast<int>(new_state));
+        ESP_LOGI(TAG, "Music stopped for dialog at %ds (releasing HTTP)",
+                 music_resume_position_);
     }
     if (new_state == kDeviceStateIdle) {
-        if (music_paused_by_dialog_ && music_player_.IsActive()) {
-            // 对话结束：若用户没有显式暂停，则恢复被打断的音乐。
+        if (music_paused_by_dialog_) {
+            // 对话结束：若用户没有显式暂停，则从打断位置续播。
             music_paused_by_dialog_ = false;
-            if (!music_user_paused_) {
-                music_player_.Resume();
-                ESP_LOGI(TAG, "Music auto-resumed after returning to idle");
+            if (!music_user_paused_ && !music_resume_url_.empty()) {
+                std::string url = std::move(music_resume_url_);
+                int position = music_resume_position_;
+                music_resume_url_.clear();
+                music_resume_position_ = 0;
+                if (StartMusicNow(url)) {
+                    if (position > 0) {
+                        music_player_.Seek(position);
+                    }
+                    ESP_LOGI(TAG, "Music resumed from %ds after returning to idle", position);
+                }
             } else {
                 ESP_LOGI(TAG, "Music stays paused (user requested pause)");
             }
@@ -1430,6 +1474,9 @@ void Application::StopMusic() {
     music_repeat_mode_ = MusicRepeatMode::kOff;
     music_paused_by_dialog_ = false;
     music_user_paused_ = false;
+    // 用户明确停止：作废「对话打断后续播」的位置，避免回到空闲又自己响起来。
+    music_resume_url_.clear();
+    music_resume_position_ = 0;
     // 队列与历史已清空，worker 退出后的 HandleMusicFinished 不会续播，
     // 因此无需额外的「主动停止」标记（该标记在切歌时容易残留）。
     music_player_.Stop();
@@ -1537,6 +1584,9 @@ bool Application::StartMusicNow(const std::string& url) {
     finished_music_url_ = url;
     music_user_paused_ = false;
     music_paused_by_dialog_ = false;
+    // 新的播放请求作废之前的续播位置。
+    music_resume_url_.clear();
+    music_resume_position_ = 0;
 
     uint32_t playback_id = ++music_playback_id_;
     if (playback_id == 0) {

@@ -191,8 +191,11 @@ private:
     std::string current_music_url_;
     // 播放历史上限，避免无限增长。
     static constexpr size_t kMusicHistoryMax = 20;
-    // 因对话（聆听/TTS）打断而自动暂停；回到空闲时自动恢复。
+    // 因对话（聆听/TTS）打断而自动停止；回到空闲时从记录位置续播。
     bool music_paused_by_dialog_ = false;
+    // 打断时记录的位置与曲目，用于回到空闲后续播。
+    int music_resume_position_ = 0;
+    std::string music_resume_url_;
     // 用户显式暂停（self.music.pause）；此标记存在时不自动恢复。
     bool music_user_paused_ = false;
     // 循环模式：kOff 播完队列即停；kList 队列循环；kOne 单曲循环。
@@ -210,6 +213,9 @@ private:
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     bool pending_listening_start_ = false;  // Waiting for playback to drain before starting listening (auto mode)
+    // 连续音频发送失败计数：达到阈值后关闭音频通道，避免链路坏死拖垮主循环。
+    int audio_send_failures_ = 0;
+    static constexpr int kMaxConsecutiveAudioSendFailures = 3;
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 
@@ -220,6 +226,7 @@ private:
     void HandleStartListeningEvent();
     void HandleStopListeningEvent();
     void HandleNetworkConnectedEvent();
+    void HandleAudioSendFailure();
     void HandleNetworkDisconnectedEvent();
     void HandleActivationDoneEvent();
     void HandleWakeWordDetectedEvent();
