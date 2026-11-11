@@ -5,6 +5,9 @@
     "builds": [
         {
             "name": "esp32-s3-audio-board",
+            "build_options": {
+                "aec_mode": "device"
+            },
             "sdkconfig_append": [
                 "CONFIG_USE_WECHAT_MESSAGE_STYLE=y",
                 "CONFIG_CAMERA_OV2640=y",
