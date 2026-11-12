@@ -1599,6 +1599,15 @@ void Application::HandleMusicFinished(uint32_t playback_id, bool success) {
         return;
     }
     audio_service_.ResetDecoder();
+    // 先把刚播完的曲目记入历史，供「上一曲」和列表循环回放使用。
+    // 注意：PlayNextMusicFromQueue() 依赖 current_music_url_ 非空来压历史，
+    // 若此处先 clear()，history 永远为空，kList 循环回放永不触发。
+    if (!current_music_url_.empty()) {
+        music_history_.push_back(current_music_url_);
+        if (music_history_.size() > kMusicHistoryMax) {
+            music_history_.pop_front();
+        }
+    }
     current_music_url_.clear();
 
     ESP_LOGI(TAG, "Music playback %lu %s", static_cast<unsigned long>(playback_id),
