@@ -208,6 +208,8 @@ private:
     bool starting_pending_music_ = false;
     // 用户显式暂停（self.music.pause）；此标记存在时不自动恢复。
     bool music_user_paused_ = false;
+    // 用户显式停止：worker 退出回调不得据此续播/循环（stop 只停当前曲、保留列表）。
+    bool music_user_stopped_ = false;
     // 循环模式：kOff 播完队列即停；kList 队列循环；kOne 单曲循环。
     // 默认整队循环（列表常驻）。
     MusicRepeatMode music_repeat_mode_ = MusicRepeatMode::kList;

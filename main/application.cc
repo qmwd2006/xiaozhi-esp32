@@ -1496,6 +1496,7 @@ bool Application::StartMusic(std::string audio_url) {
 void Application::StopMusic() {
     // 用户明确"停止播放"：只停当前曲，保留播放列表与循环模式，之后可继续。
     // （清空列表请用 ClearMusicQueue / self.music.clear_queue。）
+    music_user_stopped_ = true;
     current_music_url_.clear();
     // 清掉「刚播完的曲目」，否则单曲循环会把这首重新入队再播。
     finished_music_url_.clear();
@@ -1687,6 +1688,11 @@ void Application::HandleMusicFinished(uint32_t playback_id, bool success) {
     if (music_playback_id_ != playback_id) {
         return;
     }
+    // 用户已显式停止：worker 退出回调不应续播或循环，保持静默（列表保留）。
+    if (music_user_stopped_) {
+        ESP_LOGI(TAG, "Music finished after user stop, stay idle (playlist kept)");
+        return;
+    }
     audio_service_.ResetDecoder();
     // 先把刚播完的曲目记入历史，供「上一曲」和列表循环回放使用。
     // 注意：PlayNextMusicFromQueue() 依赖 current_music_url_ 非空来压历史，
@@ -1763,6 +1769,7 @@ void Application::PlayNextMusicFromQueue() {
 bool Application::StartMusicNow(const std::string& url) {
     current_music_url_ = url;
     finished_music_url_ = url;
+    music_user_stopped_ = false;
     music_user_paused_ = false;
     music_paused_by_dialog_ = false;
     // 新的播放请求作废之前的续播位置。
