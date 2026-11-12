@@ -137,6 +137,12 @@ public:
     bool PlayMusicNow(std::string audio_url);
     // 把 URL 追加到播放队列（不立即打断当前曲目）。
     bool EnqueueMusic(std::string audio_url);
+    // 整体替换播放列表（换行分隔的 URL 串）；保留在播曲，默认列表循环。
+    bool SetMusicQueue(const std::string& newline_separated);
+    // 清空播放列表（停止播放并清除队列）。
+    void ClearMusicQueue();
+    // 当前播放曲目 URL（可能为空）。
+    std::string GetCurrentMusicUrl() const { return current_music_url_; }
     // 快进/快退（秒，可为负）。
     bool SkipMusic(int delta_seconds);
     bool IsMusicPlaying() const;
@@ -203,7 +209,8 @@ private:
     // 用户显式暂停（self.music.pause）；此标记存在时不自动恢复。
     bool music_user_paused_ = false;
     // 循环模式：kOff 播完队列即停；kList 队列循环；kOne 单曲循环。
-    MusicRepeatMode music_repeat_mode_ = MusicRepeatMode::kOff;
+    // 默认整队循环（列表常驻）。
+    MusicRepeatMode music_repeat_mode_ = MusicRepeatMode::kList;
     // 最近一次自然播完的曲目 URL（单曲循环时重新入队）。
     std::string finished_music_url_;
     std::unique_ptr<Ota> ota_;

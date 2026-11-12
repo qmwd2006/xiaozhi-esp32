@@ -122,12 +122,10 @@ void McpServer::AddCommonTools() {
     // play_url：立即播放（若正在播放则先停止当前曲目再播新的）。
     AddTool("self.music.play_url",
             "Play an audio file from a direct HTTP(S) URL on the device speaker immediately.\n"
-            "Use this tool whenever the user asks to play a song and you already have a playable "
-            "audio URL (for example from a music search tool).\n"
+            "The URL is inserted at the FRONT of the persistent play queue and started now; "
+            "the rest of the playlist is kept and continues afterwards.\n"
             "Args:\n"
-            "  `url`: The direct audio URL (MP3) to play.\n"
-            "Return:\n"
-            "  A JSON object indicating whether playback started.",
+            "  `url`: The direct audio URL (MP3) to play.",
             PropertyList({Property("url", kPropertyTypeString)}),
             [](const PropertyList& properties) -> ReturnValue {
                 auto url = properties["url"].value<std::string>();
@@ -137,10 +135,27 @@ void McpServer::AddCommonTools() {
                 return "{\"success\": true, \"message\": \"开始播放\"}";
             });
 
+    // set_queue：一次性设置整份播放列表（换行分隔的 URL），整体替换队列。
+    AddTool("self.music.set_queue",
+            "Set the whole music playlist at once from a newline-separated list of audio URLs. "
+            "This replaces the existing queue and starts playing from the first entry "
+            "(default list-repeat). Pass the `urls` string exactly as returned by the "
+            "music server's playlist tool (multiple URLs joined by newline).\n"
+            "Args:\n"
+            "  `urls`: Newline-separated HTTP(S) audio URLs.",
+            PropertyList({Property("urls", kPropertyTypeString)}),
+            [](const PropertyList& properties) -> ReturnValue {
+                auto urls = properties["urls"].value<std::string>();
+                if (!Application::GetInstance().SetMusicQueue(urls)) {
+                    return "{\"success\": false, \"message\": \"没有有效的播放地址\"}";
+                }
+                return "{\"success\": true, \"message\": \"已设置播放列表\"}";
+            });
+
     // enqueue_url：加入播放列表（当前曲目继续，播完接这首）。
     AddTool("self.music.enqueue_url",
-            "Add an audio URL to the device play queue without interrupting the current song.\n"
-            "Use this when the user wants to queue up several songs in order.",
+            "Append an audio URL to the END of the persistent play queue without interrupting "
+            "the current song.",
             PropertyList({Property("url", kPropertyTypeString)}),
             [](const PropertyList& properties) -> ReturnValue {
                 auto url = properties["url"].value<std::string>();
@@ -151,9 +166,16 @@ void McpServer::AddCommonTools() {
             });
 
     AddTool("self.music.stop",
-            "Stop music playback on the device and clear the play queue.",
+            "Stop music playback but KEEP the playlist (so it can be resumed later).",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 Application::GetInstance().StopMusic();
+                return true;
+            });
+
+    AddTool("self.music.clear_queue",
+            "Clear the entire music playlist (stops playback and removes all queued songs).",
+            PropertyList(), [](const PropertyList& properties) -> ReturnValue {
+                Application::GetInstance().ClearMusicQueue();
                 return true;
             });
 
@@ -239,6 +261,7 @@ void McpServer::AddCommonTools() {
                     app.GetMusicRepeatMode() == Application::MusicRepeatMode::kOne ? "one"
                     : app.GetMusicRepeatMode() == Application::MusicRepeatMode::kList ? "list"
                                                                                      : "off");
+                cJSON_AddStringToObject(json, "current_url", app.GetCurrentMusicUrl().c_str());
                 return json;
             });
 
