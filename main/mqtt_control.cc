@@ -66,12 +66,17 @@ void MqttControl::Stop() {
     if (reconnect_timer_ != nullptr) {
         esp_timer_stop(reconnect_timer_);
     }
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (mqtt_ != nullptr) {
-        mqtt_->Disconnect();
-        mqtt_.reset();
+    // 先把指针移出临界区，再在锁外 Disconnect：esp-mqtt 的 Disconnect() 会等待
+    // 其内部任务退出，而该任务的回调路径可能与我们争用 mutex_，持锁调用会死锁。
+    std::unique_ptr<Mqtt> mqtt;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        mqtt = std::move(mqtt_);
+        subscribed_ = false;
     }
-    subscribed_ = false;
+    if (mqtt != nullptr) {
+        mqtt->Disconnect();
+    }
 }
 
 bool MqttControl::ConnectAndSubscribe() {
@@ -87,12 +92,15 @@ bool MqttControl::ConnectAndSubscribe() {
         host = host.substr(0, pos);
     }
 
+    // 先在锁外断开旧连接（Disconnect 会等 esp-mqtt 任务退出，持锁易死锁）。
+    std::unique_ptr<Mqtt> old;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (mqtt_ != nullptr) {
-            mqtt_->Disconnect();
-            mqtt_.reset();
-        }
+        old = std::move(mqtt_);
+    }
+    if (old != nullptr) {
+        old->Disconnect();
+        old.reset();
     }
 
     auto network = Board::GetInstance().GetNetwork();
