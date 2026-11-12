@@ -232,7 +232,9 @@ void MqttControl::SendReceipt(const std::string& payload) {
         mqtt = mqtt_;
     }
     if (mqtt != nullptr) {
-        bool ok = mqtt->Publish(config_.publish_topic, payload, 0);
+        // QoS 1：播放/切歌瞬间主任务会成批产生回执，QoS 0 的 fire-and-forget
+        // 在突发下会被 broker/客户端 socket 缓冲丢弃（实测 13 条只到 2 条）。
+        bool ok = mqtt->Publish(config_.publish_topic, payload, 1);
         ESP_LOGI(TAG, "SendReceipt publish %s (connected=%d)", ok ? "ok" : "FAIL",
                  mqtt->IsConnected());
     } else {
