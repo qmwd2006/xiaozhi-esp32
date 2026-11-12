@@ -102,10 +102,12 @@ bool MqttControl::ConnectAndSubscribe() {
         return false;
     }
     mqtt->SetKeepAlive(config_.keepalive);
-    mqtt->OnConnected([this]() {
+    // 注意：OnConnected 可能在 Connect() 返回前就被 esp-mqtt 任务回调，
+    // 此时 MqttControl::mqtt_ 尚未赋值，因此订阅用局部 mqtt 指针。
+    Mqtt* mqtt_raw = mqtt.get();
+    mqtt->OnConnected([this, mqtt_raw]() {
         ESP_LOGI(TAG, "Connected, subscribing %s", config_.subscribe_topic.c_str());
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (mqtt_ != nullptr && mqtt_->Subscribe(config_.subscribe_topic, 0)) {
+        if (mqtt_raw->Subscribe(config_.subscribe_topic, 0)) {
             subscribed_ = true;
         } else {
             ESP_LOGE(TAG, "Subscribe failed");
@@ -138,7 +140,11 @@ bool MqttControl::ConnectAndSubscribe() {
         std::lock_guard<std::mutex> lock(mutex_);
         mqtt_ = std::move(mqtt);
     }
-    ESP_LOGI(TAG, "MQTT control channel ready");
+    // Connect 返回时通常已触发 OnConnected 并完成订阅；保险起见再补一次。
+    if (!subscribed_ && mqtt_raw->Subscribe(config_.subscribe_topic, 0)) {
+        subscribed_ = true;
+    }
+    ESP_LOGI(TAG, "MQTT control channel ready (subscribed=%d)", subscribed_);
     return true;
 }
 
