@@ -1733,6 +1733,12 @@ void Application::HandleMusicFinished(uint32_t playback_id, bool success) {
         ESP_LOGI(TAG, "Music finished after user stop, stay idle (playlist kept)");
         return;
     }
+    // 因对话（聆听/TTS）打断而 Stop：worker 异步退出的回调不得续播，
+    // 否则会与提示音/对话音频混在一起。回到 Idle 时由状态回调从记录位置续播。
+    if (music_paused_by_dialog_) {
+        ESP_LOGI(TAG, "Music finished due to dialog interrupt, stay silent (will resume on idle)");
+        return;
+    }
     audio_service_.ResetDecoder();
     current_music_url_.clear();
 
