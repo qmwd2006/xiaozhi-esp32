@@ -198,6 +198,28 @@ NetworkResult<> Ota::CheckVersion() {
         ESP_LOGI(TAG, "No websocket section found!");
     }
 
+    // 可选 "mqtt_control" 段：旁路 MQTT 控制通道（与语音协议独立）。
+    // 官方云端不返回该段，has_mqtt_control_config_ 保持 false，不影响官方行为。
+    has_mqtt_control_config_ = false;
+    cJSON *mqtt_control = cJSON_GetObjectItem(root, "mqtt_control");
+    if (cJSON_IsObject(mqtt_control)) {
+        Settings settings("mqttctl", true);
+        cJSON *item = NULL;
+        cJSON_ArrayForEach(item, mqtt_control) {
+            if (cJSON_IsString(item)) {
+                if (settings.GetString(item->string) != item->valuestring) {
+                    settings.SetString(item->string, item->valuestring);
+                }
+            } else if (cJSON_IsNumber(item)) {
+                if (settings.GetInt(item->string) != item->valueint) {
+                    settings.SetInt(item->string, item->valueint);
+                }
+            }
+        }
+        has_mqtt_control_config_ = true;
+        ESP_LOGI(TAG, "mqtt_control section found");
+    }
+
     has_server_time_ = false;
     cJSON *server_time = cJSON_GetObjectItem(root, "server_time");
     if (cJSON_IsObject(server_time)) {

@@ -207,6 +207,7 @@ private:
     // 最近一次自然播完的曲目 URL（单曲循环时重新入队）。
     std::string finished_music_url_;
     std::unique_ptr<Ota> ota_;
+    std::unique_ptr<class MqttControl> mqtt_control_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
 

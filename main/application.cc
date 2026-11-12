@@ -6,6 +6,7 @@
 #include "cjson_utils.h"
 #include "display.h"
 #include "mcp_server.h"
+#include "mqtt_control.h"
 #include "mqtt_protocol.h"
 #include "settings.h"
 #include "system_info.h"
@@ -54,6 +55,9 @@ Application::Application() : notify_player_(audio_service_), music_player_(audio
 
 Application::~Application() {
     notify_player_.Stop();
+    if (mqtt_control_ != nullptr) {
+        mqtt_control_->Stop();
+    }
     if (clock_timer_handle_ != nullptr) {
         esp_timer_stop(clock_timer_handle_);
         esp_timer_delete(clock_timer_handle_);
@@ -906,6 +910,15 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->Start();
+
+    // 旁路 MQTT 控制通道：仅在 OTA 下发可选 "mqtt_control" 段时启用，
+    // 与语音协议（protocol_）互相独立，用于 idle 状态下的远程触达。
+    if (ota_ != nullptr && ota_->HasMqttControlConfig()) {
+        mqtt_control_ = std::make_unique<MqttControl>();
+        if (!mqtt_control_->Start()) {
+            ESP_LOGW(TAG, "mqtt_control start failed");
+        }
+    }
 }
 
 void Application::ShowActivationCode(const std::string& code, const std::string& message) {
