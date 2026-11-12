@@ -1868,8 +1868,28 @@ void Application::PauseMusic() {
 
 void Application::ResumeMusic() {
     music_user_paused_ = false;
-    music_player_.Resume();
-    ESP_LOGI(TAG, "Music resumed by user");
+    // 暂停中：直接恢复即可。
+    if (music_player_.IsPaused()) {
+        music_player_.Resume();
+        ESP_LOGI(TAG, "Music resumed by user (from pause)");
+        return;
+    }
+    // stop 之后：当前曲目已清空但播放列表保留，从停止时的索引重新起播。
+    if (!music_player_.IsActive() && !music_queue_.empty() && music_index_ >= 0) {
+        Schedule([this]() {
+            if (GetDeviceState() != kDeviceStateIdle) {
+                return;
+            }
+            music_user_stopped_ = false;
+            audio_service_.ResetDecoder();
+            ESP_LOGI(TAG, "Music resume after stop: restart at index=%d", music_index_);
+            if (!StartMusicAt(music_index_)) {
+                ESP_LOGE(TAG, "Music resume failed to restart");
+            }
+        });
+        return;
+    }
+    ESP_LOGI(TAG, "Music resume ignored (nothing to resume)");
 }
 
 bool Application::SeekMusic(int seconds) { return music_player_.Seek(seconds); }
