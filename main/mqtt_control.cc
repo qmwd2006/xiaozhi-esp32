@@ -205,6 +205,7 @@ void MqttControl::HandleMessage(const std::string& topic, const std::string& pay
 }
 
 void MqttControl::SendReceipt(const std::string& payload) {
+    ESP_LOGI(TAG, "SendReceipt called, len=%u", static_cast<unsigned>(payload.size()));
     if (config_.publish_topic.empty()) {
         ESP_LOGW(TAG, "SendReceipt: publish_topic empty");
         return;
@@ -212,9 +213,8 @@ void MqttControl::SendReceipt(const std::string& payload) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (mqtt_ != nullptr) {
         bool ok = mqtt_->Publish(config_.publish_topic, payload, 0);
-        if (!ok) {
-            ESP_LOGW(TAG, "SendReceipt publish failed (connected=%d)", mqtt_->IsConnected());
-        }
+        ESP_LOGI(TAG, "SendReceipt publish %s (connected=%d)", ok ? "ok" : "FAIL",
+                 mqtt_->IsConnected());
     } else {
         ESP_LOGW(TAG, "SendReceipt: mqtt_ null");
     }
