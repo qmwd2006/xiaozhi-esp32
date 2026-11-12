@@ -247,6 +247,9 @@ private:
     void HideStartupWakeWordHint();
     void StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles);
     void StopNotification();
+    // 降低 WiFi 省电等级到 LOW_POWER；但存在旁路 MQTT 控制通道时保持
+    // PERFORMANCE，否则 idle 的 WiFi 省电会造成 MQTT 大量丢包/失联。
+    void DowngradeToLowPower();
     void HandleNotificationFinished(uint32_t playback_id, bool success);
     void HandleMusicFinished(uint32_t playback_id, bool success);
     // 尝试从 music_queue_ 取出下一首开始播放（主任务线程调用）。

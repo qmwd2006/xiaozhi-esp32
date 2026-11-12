@@ -417,7 +417,7 @@ void Application::HandleActivationDoneEvent() {
     next_ota_check_seconds_ =
         esp_timer_get_time() / 1000000 + kOtaCheckIntervalSeconds;
     auto& board = Board::GetInstance();
-    board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    DowngradeToLowPower();
 
     if (!has_error) {
         Schedule([this]() {
@@ -486,7 +486,7 @@ void Application::CheckAssetsVersion() {
                 });
             });
 
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        DowngradeToLowPower();
         vTaskDelay(pdMS_TO_TICKS(1000));
 
         if (!success) {
@@ -755,7 +755,7 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->OnAudioChannelClosed([this, &board]() {
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        DowngradeToLowPower();
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
@@ -1427,7 +1427,7 @@ void Application::StartNotification(std::string audio_url, std::vector<NotifySub
     }
 
     if (!SetDeviceState(kDeviceStateNotifying)) {
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        DowngradeToLowPower();
         return;
     }
 
@@ -1462,10 +1462,21 @@ void Application::StopNotification() {
     audio_service_.ResetDecoder();
     auto& board = Board::GetInstance();
     board.GetDisplay()->SetChatMessage("assistant", "");
-    board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    DowngradeToLowPower();
     if (GetDeviceState() == kDeviceStateNotifying) {
         SetDeviceState(kDeviceStateIdle);
     }
+}
+
+void Application::DowngradeToLowPower() {
+    if (mqtt_control_ != nullptr) {
+        // 旁路 MQTT 控制通道需要 WiFi 保持低延迟、低丢包。进入 LOW_POWER
+        // （MAX_MODEM 省电）后实测 ping 达数百毫秒甚至丢包，导致 MQTT
+        // 收发失联、远程指令无响应。有旁路通道时保持 PERFORMANCE。
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+        return;
+    }
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 }
 
 void Application::HandleNotificationFinished(uint32_t playback_id, bool success) {
@@ -1506,7 +1517,7 @@ void Application::StopMusic() {
     board.GetDisplay()->SetChatMessage("assistant", "");
     // 回到低功耗；仅在空闲态时生效，避免干扰正在进行的对话状态。
     if (GetDeviceState() == kDeviceStateIdle) {
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        DowngradeToLowPower();
     }
     ESP_LOGI(TAG, "Music playback stopped");
 }
@@ -1639,7 +1650,7 @@ void Application::HandleMusicFinished(uint32_t playback_id, bool success) {
     auto& board = Board::GetInstance();
     board.GetDisplay()->SetChatMessage("assistant", "");
     if (GetDeviceState() == kDeviceStateIdle) {
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        DowngradeToLowPower();
     }
     ESP_LOGI(TAG, "Music queue finished");
 }
@@ -1914,7 +1925,7 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
         ESP_LOGE(TAG,
                  "Firmware upgrade failed, restarting audio service and continuing operation...");
         audio_service_.Start();                              // Restart audio service
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);  // Restore power save level
+        DowngradeToLowPower();  // Restore power save level
         Alert(Lang::Strings::ERROR, Lang::Strings::UPGRADE_FAILED, "cancel",
               Lang::Sounds::OGG_EXCLAMATION);
         vTaskDelay(pdMS_TO_TICKS(3000));
