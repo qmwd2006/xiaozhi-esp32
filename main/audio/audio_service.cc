@@ -335,8 +335,20 @@ void AudioService::AudioOutputTask() {
         auto task = std::move(audio_playback_queue_.front());
         audio_playback_queue_.pop_front();
         output_in_flight_ = true;
+        const uint32_t output_generation = playback_generation_;
         audio_queue_cv_.notify_all();
         lock.unlock();
+
+        // ResetDecoder 会递增 generation 并清空队列。若本帧是在 reset 之前
+        // 取出的（例如打断音乐播放、随后播放提示音/TTS），丢弃它，避免旧曲目
+        // 残帧与新的提示音混在一起播放。
+        {
+            std::lock_guard<std::mutex> gen_lock(audio_queue_mutex_);
+            if (output_generation != playback_generation_) {
+                output_in_flight_ = false;
+                continue;
+            }
+        }
 
         if (!codec_->output_enabled()) {
             esp_timer_stop(audio_power_timer_);
