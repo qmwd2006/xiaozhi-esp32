@@ -189,11 +189,13 @@ private:
     uint32_t notification_playback_id_ = 0;
     MusicPlayer music_player_;
     uint32_t music_playback_id_ = 0;
-    // 待播放队列：StartMusic 在播放中时追加，播完自动续播。
+    // 播放列表（持久，索引式循环；不会被播放消费掉）。
     std::deque<std::string> music_queue_;
-    // 播放历史（最近播放的在队尾），用于「上一曲」。
+    // 当前曲目在 music_queue_ 中的索引；-1 表示无当前曲。
+    int music_index_ = -1;
+    // 播放历史（已播曲目 URL，最近的在队尾），用于「上一曲」。
     std::deque<std::string> music_history_;
-    // 正在播放的曲目 URL（用于队列长度统计与续播去重）。
+    // 正在播放的曲目 URL（用于状态与续播）。
     std::string current_music_url_;
     // 播放历史上限，避免无限增长。
     static constexpr size_t kMusicHistoryMax = 20;
@@ -261,12 +263,12 @@ private:
     void DowngradeToLowPower();
     void HandleNotificationFinished(uint32_t playback_id, bool success);
     void HandleMusicFinished(uint32_t playback_id, bool success);
-    // 尝试从 music_queue_ 取出下一首开始播放（主任务线程调用）。
-    void PlayNextMusicFromQueue();
+    // 播放列表中第 index 首（索引式循环，不消费列表）。返回是否成功起播。
+    bool StartMusicAt(int index);
+    // 列表播完/停止时的收尾（清屏、回低功耗）。
+    void SetMusicIdleCleanup();
     // 实际启动指定 URL 的播放（主任务线程调用）。返回是否启动成功。
     bool StartMusicNow(const std::string& url);
-    // 把当前曲目记入历史（供上一曲使用）。
-    void PushCurrentToHistoryLocked();
 
     // Activation task (runs in background)
     void ActivationTask();
