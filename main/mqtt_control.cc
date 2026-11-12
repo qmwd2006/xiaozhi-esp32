@@ -168,6 +168,7 @@ void MqttControl::HandleMessage(const std::string& topic, const std::string& pay
                 std::string mcp_msg(text);
                 cJSON_free(text);
                 MqttControl* self = this;
+                ESP_LOGI(TAG, "Dispatching MCP to main task: %s", mcp_msg.c_str());
                 Application::GetInstance().Schedule([self, mcp_msg]() {
                     McpServer::GetInstance().ParseMessage(
                         mcp_msg, [self](const std::string& response) {
@@ -205,10 +206,16 @@ void MqttControl::HandleMessage(const std::string& topic, const std::string& pay
 
 void MqttControl::SendReceipt(const std::string& payload) {
     if (config_.publish_topic.empty()) {
+        ESP_LOGW(TAG, "SendReceipt: publish_topic empty");
         return;
     }
     std::lock_guard<std::mutex> lock(mutex_);
     if (mqtt_ != nullptr) {
-        mqtt_->Publish(config_.publish_topic, payload, 0);
+        bool ok = mqtt_->Publish(config_.publish_topic, payload, 0);
+        if (!ok) {
+            ESP_LOGW(TAG, "SendReceipt publish failed (connected=%d)", mqtt_->IsConnected());
+        }
+    } else {
+        ESP_LOGW(TAG, "SendReceipt: mqtt_ null");
     }
 }
