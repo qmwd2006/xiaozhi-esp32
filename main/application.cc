@@ -1238,8 +1238,10 @@ void Application::HandleStateChangedEvent() {
             } else {
                 ESP_LOGI(TAG, "Music stays paused (user requested pause)");
             }
-        } else if (!music_queue_.empty() && !music_player_.IsBusy() && music_index_ >= 0) {
+        } else if (!music_user_stopped_ && !music_queue_.empty() &&
+                   !music_player_.IsBusy() && music_index_ >= 0) {
             // 列表还有歌且当前无播放：继续播放当前索引（索引式，不消费列表）。
+            // 用户显式停止后（music_user_stopped_）不得自动重播。
             StartMusicAt(music_index_);
         }
     }
