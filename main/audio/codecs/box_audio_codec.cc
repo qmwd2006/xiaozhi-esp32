@@ -209,12 +209,16 @@ void BoxAudioCodec::EnableInput(bool enable) {
         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
         ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(
             input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_));
-        if (input_reference_ && reference_gain_channel_ >= 0) {
+        if (input_reference_) {
             // ES7210 gain masks use physical MIC numbering, which differs
             // from the TDM slot order (MIC1, MIC3, MIC2, MIC4).
+            // es7210_open() 内部用 codec->gain(初始 0dB) 写各麦增益，其后的
+            // 全通道 30dB 实测对参考通道不生效（MIC3 恒为 0dB）。AEC 依赖参考
+            // 通道电平，因此板子未显式指定时默认给参考麦 30dB。
+            const int ref_channel = reference_gain_channel_ >= 0 ? reference_gain_channel_ : 2;
+            const float ref_gain = reference_gain_channel_ >= 0 ? reference_gain_ : 30.0f;
             ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(
-                input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(reference_gain_channel_),
-                reference_gain_));
+                input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(ref_channel), ref_gain));
         }
     } else {
         ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
