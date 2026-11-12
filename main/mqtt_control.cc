@@ -232,9 +232,10 @@ void MqttControl::SendReceipt(const std::string& payload) {
         mqtt = mqtt_;
     }
     if (mqtt != nullptr) {
-        // QoS 1：播放/切歌瞬间主任务会成批产生回执，QoS 0 的 fire-and-forget
-        // 在突发下会被 broker/客户端 socket 缓冲丢弃（实测 13 条只到 2 条）。
-        bool ok = mqtt->Publish(config_.publish_topic, payload, 1);
+        // QoS 0：回执是尽力而为的状态通知，丢失可由客户端重试兜底。
+        // 曾试过 QoS 1，但在 WiFi 不稳时出现 PUBACK 缺失导致的重传风暴，
+        // 反而把后续消息堵住（实测同一条 id 重发 ~20 次、新指令积压），故用 QoS 0。
+        bool ok = mqtt->Publish(config_.publish_topic, payload, 0);
         ESP_LOGI(TAG, "SendReceipt publish %s (connected=%d)", ok ? "ok" : "FAIL",
                  mqtt->IsConnected());
     } else {
