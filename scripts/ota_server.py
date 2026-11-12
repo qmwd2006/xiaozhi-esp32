@@ -43,6 +43,13 @@ FIRMWARE_VERSION = "2.5.3"
 PUBLIC_BASE_URL = ""
 ALWAYS_FORCE = False
 
+# 旁路 MQTT 控制通道（可选）。仅当配置了 endpoint 时下发 mqtt_control 段，
+# 官方/纯 ws 场景保持 None，设备不会启动旁路客户端。
+MQTT_CONTROL_ENDPOINT: str | None = None
+MQTT_CONTROL_USERNAME = ""
+MQTT_CONTROL_PASSWORD = ""
+MQTT_CONTROL_KEEPALIVE = 240
+
 # app image 布局：image header + segment header 之后是 esp_app_desc_t。
 # esp_app_desc_t: magic(4) secure_version(4) reserv1(8) version(32) project(32)
 #                 time(16) date(16) idf_ver(32) app_elf_sha256(32) reserv2(...)
@@ -220,6 +227,19 @@ class OtaHandler(BaseHTTPRequestHandler):
                 "token": WEBSOCKET_TOKEN,
             },
         }
+        # 可选：旁路 MQTT 控制通道。per-device topic，用 MAC 的十六进制串。
+        if MQTT_CONTROL_ENDPOINT:
+            mac = (device or "").replace(":", "").replace("-", "").lower() or "unknown"
+            payload["mqtt_control"] = {
+                "endpoint": MQTT_CONTROL_ENDPOINT,
+                "client_id": f"xiaozhi-ctl-{mac}",
+                "username": MQTT_CONTROL_USERNAME,
+                "password": MQTT_CONTROL_PASSWORD,
+                "keepalive": MQTT_CONTROL_KEEPALIVE,
+                "subscribe_topic": f"xiaozhi/{mac}/down",
+                "publish_topic": f"xiaozhi/{mac}/up",
+            }
+            logger.info("下发 mqtt_control: %s (mac=%s)", MQTT_CONTROL_ENDPOINT, mac)
         logger.info("返回固件 %s%s -> %s", FIRMWARE_VERSION,
                     " (force)" if force else "", firmware["url"])
         self._send_json(payload)
@@ -241,6 +261,8 @@ class OtaHandler(BaseHTTPRequestHandler):
 def main() -> int:
     global BIN_PATH, FIRMWARE_VERSION, PUBLIC_BASE_URL, ALWAYS_FORCE
     global WEBSOCKET_URL, WEBSOCKET_TOKEN
+    global MQTT_CONTROL_ENDPOINT, MQTT_CONTROL_USERNAME, MQTT_CONTROL_PASSWORD
+    global MQTT_CONTROL_KEEPALIVE
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8066)
@@ -257,6 +279,12 @@ def main() -> int:
                              "ws://192.168.31.178:8989/xiaozhi/v1/")
     parser.add_argument("--websocket-token", default=WEBSOCKET_TOKEN,
                         help="下发给设备的 websocket token")
+    parser.add_argument("--mqtt-control-endpoint", default=None,
+                        help="旁路 MQTT 控制通道 broker 地址 host:port；"
+                             "配置后 OTA 响应携带 mqtt_control 段（默认不下发）")
+    parser.add_argument("--mqtt-control-username", default="")
+    parser.add_argument("--mqtt-control-password", default="")
+    parser.add_argument("--mqtt-control-keepalive", type=int, default=240)
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -270,6 +298,10 @@ def main() -> int:
     ALWAYS_FORCE = args.force
     WEBSOCKET_URL = args.websocket_url
     WEBSOCKET_TOKEN = args.websocket_token
+    MQTT_CONTROL_ENDPOINT = args.mqtt_control_endpoint
+    MQTT_CONTROL_USERNAME = args.mqtt_control_username
+    MQTT_CONTROL_PASSWORD = args.mqtt_control_password
+    MQTT_CONTROL_KEEPALIVE = args.mqtt_control_keepalive
 
     if not BIN_PATH.exists():
         logger.error("固件文件不存在: %s", BIN_PATH)
@@ -294,6 +326,7 @@ def main() -> int:
     logger.info("OTA 地址: %s/xiaozhi/ota/", PUBLIC_BASE_URL)
     logger.info("固件下载: %s/xiaozhi.bin", PUBLIC_BASE_URL)
     logger.info("下发 websocket: %s", WEBSOCKET_URL)
+    logger.info("旁路 MQTT 控制: %s", MQTT_CONTROL_ENDPOINT or "未启用")
 
     server = ThreadingHTTPServer((args.host, args.port), OtaHandler)
     try:
