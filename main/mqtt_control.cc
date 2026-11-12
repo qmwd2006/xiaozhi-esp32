@@ -33,8 +33,14 @@ MqttControl::~MqttControl() {
         esp_timer_delete(reconnect_timer_);
         reconnect_timer_ = nullptr;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
-    mqtt_.reset();
+    std::shared_ptr<Mqtt> mqtt;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        mqtt = std::move(mqtt_);
+    }
+    if (mqtt != nullptr) {
+        mqtt->Disconnect();
+    }
 }
 
 bool MqttControl::LoadConfig(Config& out) const {
@@ -68,7 +74,7 @@ void MqttControl::Stop() {
     }
     // 先把指针移出临界区，再在锁外 Disconnect：esp-mqtt 的 Disconnect() 会等待
     // 其内部任务退出，而该任务的回调路径可能与我们争用 mutex_，持锁调用会死锁。
-    std::unique_ptr<Mqtt> mqtt;
+    std::shared_ptr<Mqtt> mqtt;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         mqtt = std::move(mqtt_);
@@ -93,7 +99,7 @@ bool MqttControl::ConnectAndSubscribe() {
     }
 
     // 先在锁外断开旧连接（Disconnect 会等 esp-mqtt 任务退出，持锁易死锁）。
-    std::unique_ptr<Mqtt> old;
+    std::shared_ptr<Mqtt> old;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         old = std::move(mqtt_);
@@ -218,11 +224,17 @@ void MqttControl::SendReceipt(const std::string& payload) {
         ESP_LOGW(TAG, "SendReceipt: publish_topic empty");
         return;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (mqtt_ != nullptr) {
-        bool ok = mqtt_->Publish(config_.publish_topic, payload, 0);
+    // 锁内只取引用，锁外 Publish：esp_mqtt_client_publish 在 outbox 满时可能阻塞
+    // 等待其事件循环，若持锁等待，而事件循环回调又需要该锁，会死锁。
+    std::shared_ptr<Mqtt> mqtt;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        mqtt = mqtt_;
+    }
+    if (mqtt != nullptr) {
+        bool ok = mqtt->Publish(config_.publish_topic, payload, 0);
         ESP_LOGI(TAG, "SendReceipt publish %s (connected=%d)", ok ? "ok" : "FAIL",
-                 mqtt_->IsConnected());
+                 mqtt->IsConnected());
     } else {
         ESP_LOGW(TAG, "SendReceipt: mqtt_ null");
     }

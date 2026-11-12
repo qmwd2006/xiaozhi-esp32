@@ -44,7 +44,8 @@ private:
     void SendReceipt(const std::string& payload);
 
     Config config_;
-    std::unique_ptr<Mqtt> mqtt_;
+    // shared_ptr：回调路径可安全持有引用，避免与 Stop()/重连并发释放后悬空。
+    std::shared_ptr<Mqtt> mqtt_;
     esp_timer_handle_t reconnect_timer_ = nullptr;
     std::mutex mutex_;
     bool started_ = false;
