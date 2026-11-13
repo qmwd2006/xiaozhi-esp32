@@ -11,6 +11,8 @@
 #include <vector>
 
 #include <esp_afe_sr_models.h>
+
+#include "audio_debugger.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <freertos/task.h>
@@ -97,6 +99,8 @@ private:
     StaticTask_t* wake_word_encode_task_buffer_ = nullptr;
     StackType_t* wake_word_encode_task_stack_ = nullptr;
     WakeWordAudioCache wake_word_audio_cache_;
+    // 诊断：把 AFE fetch 输出（AEC 之后）经 UDP 发出，用于对比 AFE 前后的回声压制。
+    std::unique_ptr<AudioDebugger> afe_output_debugger_;
     std::deque<std::vector<uint8_t>> wake_word_opus_;
     std::mutex wake_word_mutex_;
     std::condition_variable wake_word_cv_;

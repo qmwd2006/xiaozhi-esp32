@@ -16,7 +16,7 @@
 
 #define TAG "AudioDebugger"
 
-AudioDebugger::AudioDebugger() {
+AudioDebugger::AudioDebugger(uint16_t port_override) {
 #if CONFIG_USE_AUDIO_DEBUGGER
     udp_sockfd_ = socket(AF_INET, SOCK_DGRAM, 0);
     if (udp_sockfd_ >= 0) {
@@ -30,6 +30,9 @@ AudioDebugger::AudioDebugger() {
             auto [ptr, ec] =
                 std::from_chars(port_str.data(), port_str.data() + port_str.size(), port);
 
+            if (port_override != 0) {
+                port = port_override;
+            }
             if (ec == std::errc() && ptr == port_str.data() + port_str.size() && port > 0 &&
                 port <= UINT16_MAX) {
                 memset(&udp_server_addr_, 0, sizeof(udp_server_addr_));
@@ -37,7 +40,7 @@ AudioDebugger::AudioDebugger() {
                 udp_server_addr_.sin_port = htons(port);
                 inet_pton(AF_INET, ip.c_str(), &udp_server_addr_.sin_addr);
 
-                ESP_LOGI(TAG, "Initialized server address: %s", CONFIG_AUDIO_DEBUG_UDP_SERVER);
+                ESP_LOGI(TAG, "Initialized server %s:%d", ip.c_str(), port);
             } else {
                 ESP_LOGW(TAG, "Invalid server address: %s, should be IP:PORT",
                          CONFIG_AUDIO_DEBUG_UDP_SERVER);

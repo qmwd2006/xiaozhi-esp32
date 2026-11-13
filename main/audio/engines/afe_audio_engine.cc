@@ -1,5 +1,7 @@
 #include "afe_audio_engine.h"
 
+#include "sdkconfig.h"
+
 #include <cassert>
 #include <cstring>
 #include <string_view>
@@ -448,6 +450,17 @@ void AfeAudioEngine::ProcessingTask() {
         if (kUseAfeForVoiceProcessing && (bits & kVoiceProcessingEnabled)) {
             HandleVoiceResult(result);
         }
+#if CONFIG_USE_AUDIO_DEBUGGER
+        // 诊断：抓取 AFE fetch 输出（AEC 之后）发 UDP 9002，用于对比 AFE 前(9001)的回声压制。
+        if (result->data != nullptr && result->data_size > 0) {
+            if (afe_output_debugger_ == nullptr) {
+                afe_output_debugger_ = std::make_unique<AudioDebugger>(9002);
+            }
+            std::vector<int16_t> dbg(result->data,
+                                     result->data + result->data_size / sizeof(int16_t));
+            afe_output_debugger_->Feed(dbg);
+        }
+#endif
     }
 }
 
