@@ -1716,12 +1716,6 @@ void Application::TryStartPendingMusic() {
     if (pending_music_url_.empty() || starting_pending_music_) {
         return;
     }
-    if (music_player_.IsBusy() || notify_player_.IsBusy()) {
-        ESP_LOGW(TAG, "Pending music waiting: player busy (music=%d notify=%d) state=%s",
-                 music_player_.IsBusy() ? 1 : 0, notify_player_.IsBusy() ? 1 : 0,
-                 GetDeviceStateName());
-        return;
-    }
 
     const auto state = GetDeviceState();
     if (state == kDeviceStateSpeaking) {
@@ -1733,6 +1727,8 @@ void Application::TryStartPendingMusic() {
         // 注意：WebSocket 的 CloseAudioChannel() 只是重置传输层，
         // 不会触发 OnAudioChannelClosed 回调，所以这里必须显式切状态，
         // 否则待播请求会永远卡在 Listening。
+        // 注意：此处不能因 music_player_.IsBusy() 提前返回——切歌刚 Stop 时
+        // worker 异步退出需要时间，若被挡住就永远走不到这里，实测会卡数十秒。
         ESP_LOGI(TAG, "Deferred music: leaving Listening to start playback");
         if (protocol_ != nullptr && protocol_->IsAudioChannelOpened()) {
             protocol_->CloseAudioChannel();
@@ -1749,6 +1745,14 @@ void Application::TryStartPendingMusic() {
         return;
     }
     if (state != kDeviceStateIdle) {
+        return;
+    }
+
+    // 仅在真正要起播（Idle）时才等播放器空闲，避免与旧 worker 竞争。
+    if (music_player_.IsBusy() || notify_player_.IsBusy()) {
+        ESP_LOGW(TAG, "Pending music waiting: player busy (music=%d notify=%d) state=%s",
+                 music_player_.IsBusy() ? 1 : 0, notify_player_.IsBusy() ? 1 : 0,
+                 GetDeviceStateName());
         return;
     }
 
@@ -1874,6 +1878,13 @@ void Application::NextMusic() {
                                : -1;
             music_player_.Stop();
             audio_service_.ResetDecoder();
+            // 关键：必须登记待播请求并启动重试定时器，否则只能等对话彻底结束
+            // 回到 idle 才由状态回调起播（实测会卡在 listening 数十秒）。
+            if (music_index_ >= 0 &&
+                music_index_ < static_cast<int>(music_queue_.size())) {
+                pending_music_url_ = music_queue_[music_index_];
+                ArmPendingMusicRetry();
+            }
             ESP_LOGI(TAG, "NextMusic deferred until idle, index=%d", music_index_);
             return;
         }
@@ -1894,7 +1905,16 @@ void Application::PrevMusic() {
             return;
         }
         if (GetDeviceState() != kDeviceStateIdle) {
-            ESP_LOGW(TAG, "PrevMusic: device not idle");
+            // 与 NextMusic 一致：登记待播并启动重试，回到 idle 立即起播。
+            const int n = static_cast<int>(music_queue_.size());
+            music_index_ = n > 0 ? ((music_index_ - 1) % n + n) % n : -1;
+            music_player_.Stop();
+            audio_service_.ResetDecoder();
+            if (music_index_ >= 0 && music_index_ < n) {
+                pending_music_url_ = music_queue_[music_index_];
+                ArmPendingMusicRetry();
+            }
+            ESP_LOGI(TAG, "PrevMusic deferred until idle, index=%d", music_index_);
             return;
         }
         audio_service_.ResetDecoder();
