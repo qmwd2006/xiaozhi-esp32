@@ -2013,6 +2013,15 @@ void Application::ResumeMusic() {
     if (!music_player_.IsActive() && !music_queue_.empty() && music_index_ >= 0) {
         Schedule([this]() {
             if (GetDeviceState() != kDeviceStateIdle) {
+                // 对话/播报中：登记待播（精确到当前索引那首）并启动重试，
+                // 回到 idle/离开 listening 后立即恢复同一首，而不是被状态回调
+                // 里的其它续播逻辑抢走导致“接着放却放了别的歌”。
+                if (music_index_ >= 0 &&
+                    music_index_ < static_cast<int>(music_queue_.size())) {
+                    music_user_stopped_ = false;
+                    pending_music_url_ = music_queue_[music_index_];
+                    ArmPendingMusicRetry();
+                }
                 return;
             }
             music_user_stopped_ = false;

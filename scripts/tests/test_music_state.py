@@ -242,6 +242,14 @@ class MusicStateSourceGuardTests(unittest.TestCase):
         self.assertIn("pending_music_url_ = music_queue_[music_index_];", body)
         self.assertIn("ArmPendingMusicRetry();", body)
 
+    def test_resume_after_stop_registers_pending_when_not_idle(self):
+        body = definition(APPLICATION, "void Application::ResumeMusic()")
+        # Deferred resume must register pending (same index) instead of silently
+        # giving up, otherwise "接着放" only starts on a later idle transition
+        # and may pick a different song.
+        self.assertIn("pending_music_url_ = music_queue_[music_index_];", body)
+        self.assertIn("ArmPendingMusicRetry();", body)
+
     def test_try_start_switches_idle_before_busy_guard(self):
         body = definition(APPLICATION, "void Application::TryStartPendingMusic()")
         listening = body.index("state == kDeviceStateListening")
