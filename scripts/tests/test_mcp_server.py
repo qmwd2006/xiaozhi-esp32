@@ -61,14 +61,21 @@ class McpServerTest(unittest.TestCase):
                     bool UpgradeFirmware(const std::string&) { std::abort(); }
                     void ForceOtaCheck() {}
                     bool StartMusic(std::string) { return true; }
-                    bool PlayMusicNow(std::string) { return true; }
+                    bool PlayMusicNow(std::string, std::string = "") { return true; }
                     void StopMusic() {}
                     void NextMusic() {}
                     void PrevMusic() {}
                     void PauseMusic() {}
                     void ResumeMusic() {}
                     bool SeekMusic(int) { return true; }
-                    bool EnqueueMusic(std::string) { return true; }
+                    bool EnqueueMusic(std::string, std::string = "") { return true; }
+                    bool SetMusicQueue(const std::string&, const std::string& = "") { return true; }
+                    void ClearMusicQueue() {}
+                    std::string GetCurrentMusicUrl() const { return {}; }
+                    std::string GetCurrentMusicTitle() const { return {}; }
+                    const char* GetDeviceStateName() const { return "idle"; }
+                    bool HasPendingMusic() const { return false; }
+                    bool IsMusicBusy() const { return false; }
                     bool IsMusicPlaying() const { return false; }
                     bool IsMusicPaused() const { return false; }
                     int MusicPositionSeconds() const { return 0; }
