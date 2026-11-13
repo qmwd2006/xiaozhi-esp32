@@ -1533,6 +1533,8 @@ void Application::ClearMusicQueue() {
     Schedule([this]() {
         StopMusic();
         music_queue_.clear();
+        music_titles_.clear();
+        current_music_title_.clear();
         music_index_ = -1;
         music_history_.clear();
         music_repeat_mode_ = MusicRepeatMode::kList;
@@ -1562,12 +1564,48 @@ bool Application::StartMusicAt(int index) {
         }
     }
     music_index_ = index;
+    current_music_title_ = index < static_cast<int>(music_titles_.size())
+                               ? music_titles_[index]
+                               : ResolveMusicTitle(url, "");
     return StartMusicNow(url);
 }
 
-bool Application::SetMusicQueue(const std::string& newline_separated) {
+std::string Application::ResolveMusicTitle(const std::string& url,
+                                           const std::string& explicit_title) {
+    if (!explicit_title.empty()) {
+        return explicit_title;
+    }
+    // 兜底：从 URL 最后一段去掉扩展名，得到一个可读名字（如 library/BV1xx.mp3 -> BV1xx）。
+    size_t slash = url.find_last_of('/');
+    std::string name = slash == std::string::npos ? url : url.substr(slash + 1);
+    size_t dot = name.find_last_of('.');
+    if (dot != std::string::npos && dot > 0) {
+        name = name.substr(0, dot);
+    }
+    return name;
+}
+
+bool Application::SetMusicQueue(const std::string& newline_separated,
+                                const std::string& titles) {
+    // 标题与 URL 按行一一对应（缺失或空行视为未知）。
+    std::vector<std::string> title_lines;
+    {
+        size_t p = 0;
+        while (p <= titles.size()) {
+            size_t nl = titles.find('\n', p);
+            size_t e = (nl == std::string::npos) ? titles.size() : nl;
+            std::string line = titles.substr(p, e - p);
+            size_t b = line.find_first_not_of(" \t\r");
+            size_t le = line.find_last_not_of(" \t\r");
+            title_lines.push_back(b == std::string::npos ? std::string()
+                                                         : line.substr(b, le - b + 1));
+            if (nl == std::string::npos) break;
+            p = nl + 1;
+        }
+    }
     // 解析换行分隔的 URL 列表。
     std::deque<std::string> urls;
+    std::deque<std::string> url_titles;
     size_t pos = 0;
     while (pos <= newline_separated.size()) {
         size_t nl = newline_separated.find('\n', pos);
@@ -1582,7 +1620,10 @@ bool Application::SetMusicQueue(const std::string& newline_separated) {
             line.clear();
         }
         if (line.rfind("http://", 0) == 0 || line.rfind("https://", 0) == 0) {
+            size_t idx = urls.size();
             urls.push_back(std::move(line));
+            std::string t = idx < title_lines.size() ? title_lines[idx] : std::string();
+            url_titles.push_back(std::move(t));
         }
         if (nl == std::string::npos) {
             break;
@@ -1593,10 +1634,11 @@ bool Application::SetMusicQueue(const std::string& newline_separated) {
         ESP_LOGW(TAG, "SetMusicQueue: no valid url");
         return false;
     }
-    Schedule([this, urls = std::move(urls)]() mutable {
+    Schedule([this, urls = std::move(urls), url_titles = std::move(url_titles)]() mutable {
         bool was_busy = music_player_.IsBusy();
         // 整体替换列表（索引式，列表本身不被消费）。
         music_queue_ = std::move(urls);
+        music_titles_ = std::move(url_titles);
         music_index_ = -1;
         music_history_.clear();
         finished_music_url_.clear();
@@ -1626,13 +1668,14 @@ bool Application::SetMusicQueue(const std::string& newline_separated) {
     return true;
 }
 
-bool Application::EnqueueMusic(std::string audio_url) {
+bool Application::EnqueueMusic(std::string audio_url, std::string title) {
     if (audio_url.rfind("http://", 0) != 0 && audio_url.rfind("https://", 0) != 0) {
         ESP_LOGW(TAG, "Invalid music url: %s", audio_url.c_str());
         return false;
     }
-    Schedule([this, url = std::move(audio_url)]() mutable {
+    Schedule([this, url = std::move(audio_url), title = std::move(title)]() mutable {
         music_queue_.push_back(std::move(url));
+        music_titles_.push_back(std::move(title));
         ESP_LOGI(TAG, "Music enqueued, queue length=%u",
                  static_cast<unsigned>(music_queue_.size()));
         // 若当前空闲且没有正在播放，从新加入的这首开始。
@@ -1643,22 +1686,26 @@ bool Application::EnqueueMusic(std::string audio_url) {
     return true;
 }
 
-bool Application::PlayMusicNow(std::string audio_url) {
+bool Application::PlayMusicNow(std::string audio_url, std::string title) {
     if (audio_url.rfind("http://", 0) != 0 && audio_url.rfind("https://", 0) != 0) {
         ESP_LOGW(TAG, "Invalid music url: %s", audio_url.c_str());
         return false;
     }
-    Schedule([this, url = std::move(audio_url)]() mutable {
+    Schedule([this, url = std::move(audio_url), title = std::move(title)]() mutable {
         // 新语义：把该曲插到播放列表首部并立即播放，其余列表保留（播完继续）。
-        // 若已在列表中出现，先移除旧位置避免重复。
-        for (auto it = music_queue_.begin(); it != music_queue_.end();) {
-            if (*it == url) {
-                it = music_queue_.erase(it);
+        // 若已在列表中出现，先移除旧位置避免重复（标题同序维护）。
+        for (size_t i = 0; i < music_queue_.size();) {
+            if (music_queue_[i] == url) {
+                music_queue_.erase(music_queue_.begin() + i);
+                if (i < music_titles_.size()) {
+                    music_titles_.erase(music_titles_.begin() + i);
+                }
             } else {
-                ++it;
+                ++i;
             }
         }
         music_queue_.push_front(url);
+        music_titles_.push_front(title);
         music_index_ = 0;
         pending_music_url_.clear();
         // 丢弃旧曲目残留在播放队列里的 PCM，避免串音。
@@ -1834,6 +1881,21 @@ void Application::SetMusicIdleCleanup() {
 bool Application::StartMusicNow(const std::string& url) {
     current_music_url_ = url;
     finished_music_url_ = url;
+    // 若当前索引对得上（StartMusicAt/待播已设好索引），用其标题；否则按 url 在列表中查。
+    if (music_index_ >= 0 && music_index_ < static_cast<int>(music_queue_.size()) &&
+        music_queue_[music_index_] == url &&
+        music_index_ < static_cast<int>(music_titles_.size())) {
+        current_music_title_ = music_titles_[music_index_];
+    } else {
+        std::string found;
+        for (size_t i = 0; i < music_queue_.size() && i < music_titles_.size(); ++i) {
+            if (music_queue_[i] == url) {
+                found = music_titles_[i];
+                break;
+            }
+        }
+        current_music_title_ = ResolveMusicTitle(url, found);
+    }
     music_user_stopped_ = false;
     music_user_paused_ = false;
     music_paused_by_dialog_ = false;

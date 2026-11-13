@@ -134,16 +134,19 @@ public:
     void ResumeMusic();
     // 跳转到指定秒数。
     bool SeekMusic(int seconds);
-    // 立即播放（打断当前曲目并清空队列）。
-    bool PlayMusicNow(std::string audio_url);
+    // 立即播放（插入列表首部并播放，标题可选）。
+    bool PlayMusicNow(std::string audio_url, std::string title = "");
     // 把 URL 追加到播放队列（不立即打断当前曲目）。
-    bool EnqueueMusic(std::string audio_url);
-    // 整体替换播放列表（换行分隔的 URL 串）；保留在播曲，默认列表循环。
-    bool SetMusicQueue(const std::string& newline_separated);
+    bool EnqueueMusic(std::string audio_url, std::string title = "");
+    // 整体替换播放列表（换行分隔的 URL 串；titles 同序换行分隔，可空）。
+    bool SetMusicQueue(const std::string& newline_separated,
+                       const std::string& titles = "");
     // 清空播放列表（停止播放并清除队列）。
     void ClearMusicQueue();
     // 当前播放曲目 URL（可能为空）。
     std::string GetCurrentMusicUrl() const { return current_music_url_; }
+    // 当前播放曲目标题（可能为空）。
+    std::string GetCurrentMusicTitle() const { return current_music_title_; }
     // 快进/快退（秒，可为负）。
     bool SkipMusic(int delta_seconds);
     bool IsMusicPlaying() const;
@@ -199,12 +202,18 @@ private:
     uint32_t music_playback_id_ = 0;
     // 播放列表（持久，索引式循环；不会被播放消费掉）。
     std::deque<std::string> music_queue_;
+    // 与 music_queue_ 一一对应的曲目标题（可为空串表示未知），供 LLM 回答“正在播放什么”。
+    std::deque<std::string> music_titles_;
     // 当前曲目在 music_queue_ 中的索引；-1 表示无当前曲。
     int music_index_ = -1;
+    // 解析单曲标题：优先用显式标题参数，否则从 URL 兜底推一个可读名字。
+    static std::string ResolveMusicTitle(const std::string& url, const std::string& explicit_title);
     // 播放历史（已播曲目 URL，最近的在队尾），用于「上一曲」。
     std::deque<std::string> music_history_;
     // 正在播放的曲目 URL（用于状态与续播）。
     std::string current_music_url_;
+    // 正在播放的曲目标题（可为空）。
+    std::string current_music_title_;
     // 播放历史上限，避免无限增长。
     static constexpr size_t kMusicHistoryMax = 20;
     // 因对话（聆听/TTS）打断而自动停止；回到空闲时从记录位置续播。

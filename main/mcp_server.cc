@@ -125,11 +125,14 @@ void McpServer::AddCommonTools() {
             "The URL is inserted at the FRONT of the persistent play queue and started now; "
             "the rest of the playlist is kept and continues afterwards.\n"
             "Args:\n"
-            "  `url`: The direct audio URL (MP3) to play.",
-            PropertyList({Property("url", kPropertyTypeString)}),
+            "  `url`: The direct audio URL (MP3) to play.\n"
+            "  `title`: Optional human-readable song title/artist for status queries.",
+            PropertyList({Property("url", kPropertyTypeString),
+                          Property("title", kPropertyTypeString, "")}),
             [](const PropertyList& properties) -> ReturnValue {
                 auto url = properties["url"].value<std::string>();
-                if (!Application::GetInstance().PlayMusicNow(std::move(url))) {
+                auto title = properties["title"].value<std::string>();
+                if (!Application::GetInstance().PlayMusicNow(std::move(url), std::move(title))) {
                     return "{\"success\": false, \"message\": \"链接无效\"}";
                 }
                 return "{\"success\": true, \"message\": \"开始播放\"}";
@@ -142,11 +145,14 @@ void McpServer::AddCommonTools() {
             "(default list-repeat). Pass the `urls` string exactly as returned by the "
             "music server's playlist tool (multiple URLs joined by newline).\n"
             "Args:\n"
-            "  `urls`: Newline-separated HTTP(S) audio URLs.",
-            PropertyList({Property("urls", kPropertyTypeString)}),
+            "  `urls`: Newline-separated HTTP(S) audio URLs.\n"
+            "  `titles`: Optional newline-separated titles aligned with urls (same order).",
+            PropertyList({Property("urls", kPropertyTypeString),
+                          Property("titles", kPropertyTypeString, "")}),
             [](const PropertyList& properties) -> ReturnValue {
                 auto urls = properties["urls"].value<std::string>();
-                if (!Application::GetInstance().SetMusicQueue(urls)) {
+                auto titles = properties["titles"].value<std::string>();
+                if (!Application::GetInstance().SetMusicQueue(urls, titles)) {
                     return "{\"success\": false, \"message\": \"没有有效的播放地址\"}";
                 }
                 return "{\"success\": true, \"message\": \"已设置播放列表\"}";
@@ -155,11 +161,13 @@ void McpServer::AddCommonTools() {
     // enqueue_url：加入播放列表（当前曲目继续，播完接这首）。
     AddTool("self.music.enqueue_url",
             "Append an audio URL to the END of the persistent play queue without interrupting "
-            "the current song.",
-            PropertyList({Property("url", kPropertyTypeString)}),
+            "the current song. `title` is optional human-readable name.",
+            PropertyList({Property("url", kPropertyTypeString),
+                          Property("title", kPropertyTypeString, "")}),
             [](const PropertyList& properties) -> ReturnValue {
                 auto url = properties["url"].value<std::string>();
-                if (!Application::GetInstance().EnqueueMusic(std::move(url))) {
+                auto title = properties["title"].value<std::string>();
+                if (!Application::GetInstance().EnqueueMusic(std::move(url), std::move(title))) {
                     return "{\"success\": false, \"message\": \"链接无效\"}";
                 }
                 return "{\"success\": true, \"message\": \"已加入播放列表\"}";
@@ -262,6 +270,7 @@ void McpServer::AddCommonTools() {
                     : app.GetMusicRepeatMode() == Application::MusicRepeatMode::kList ? "list"
                                                                                      : "off");
                 cJSON_AddStringToObject(json, "current_url", app.GetCurrentMusicUrl().c_str());
+                cJSON_AddStringToObject(json, "title", app.GetCurrentMusicTitle().c_str());
                 cJSON_AddStringToObject(json, "device_state", app.GetDeviceStateName());
                 cJSON_AddBoolToObject(json, "pending", app.HasPendingMusic());
                 cJSON_AddBoolToObject(json, "busy", app.IsMusicBusy());
