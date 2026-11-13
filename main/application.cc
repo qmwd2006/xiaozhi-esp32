@@ -200,7 +200,8 @@ void Application::Run() {
         MAIN_EVENT_VAD_CHANGE | MAIN_EVENT_CLOCK_TICK | MAIN_EVENT_ERROR |
         MAIN_EVENT_NETWORK_CONNECTED | MAIN_EVENT_NETWORK_DISCONNECTED | MAIN_EVENT_TOGGLE_CHAT |
         MAIN_EVENT_START_LISTENING | MAIN_EVENT_STOP_LISTENING | MAIN_EVENT_ACTIVATION_DONE |
-        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED | MAIN_EVENT_STARTUP_HINT_TIMEOUT;
+        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED | MAIN_EVENT_STARTUP_HINT_TIMEOUT |
+        MAIN_EVENT_PENDING_MUSIC_RETRY;
 
     while (true) {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
@@ -310,6 +311,14 @@ void Application::Run() {
         }
         if (bits & MAIN_EVENT_STARTUP_HINT_TIMEOUT) {
             HideStartupWakeWordHint();
+        }
+        if (bits & MAIN_EVENT_PENDING_MUSIC_RETRY) {
+            // 定时重试：待播请求不必等下一次状态变化（避免打断后命令长时间不执行）。
+            if (pending_music_url_.empty()) {
+                DisarmPendingMusicRetry();
+            } else {
+                TryStartPendingMusic();
+            }
         }
         ShowStartupWakeWordHint();
     }
@@ -1603,6 +1612,7 @@ bool Application::SetMusicQueue(const std::string& newline_separated) {
             // 对话/播报中：停当前曲，待回 Idle 由待播机制从首曲起播新列表。
             pending_music_url_ = music_queue_.front();
             music_index_ = 0;
+            ArmPendingMusicRetry();
             if (music_player_.IsBusy()) {
                 music_player_.Stop();
             }
@@ -1658,6 +1668,7 @@ bool Application::PlayMusicNow(std::string audio_url) {
             ESP_LOGI(TAG, "Music request deferred until idle (state=%d)",
                      static_cast<int>(GetDeviceState()));
             pending_music_url_ = std::move(url);
+            ArmPendingMusicRetry();
             if (music_player_.IsBusy()) {
                 music_player_.Stop();
             }
@@ -1675,11 +1686,40 @@ bool Application::PlayMusicNow(std::string audio_url) {
     return true;
 }
 
+void Application::ArmPendingMusicRetry() {
+    if (pending_music_retry_timer_ == nullptr) {
+        esp_timer_create_args_t timer_args = {
+            .callback =
+                [](void* arg) {
+                    auto app = static_cast<Application*>(arg);
+                    xEventGroupSetBits(app->event_group_, MAIN_EVENT_PENDING_MUSIC_RETRY);
+                },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "music_retry",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &pending_music_retry_timer_));
+    }
+    // 已启动则忽略（周期定时器重复启动无害但避免无谓开销）。
+    esp_timer_stop(pending_music_retry_timer_);
+    ESP_ERROR_CHECK(esp_timer_start_periodic(pending_music_retry_timer_, 250 * 1000));
+}
+
+void Application::DisarmPendingMusicRetry() {
+    if (pending_music_retry_timer_ != nullptr) {
+        esp_timer_stop(pending_music_retry_timer_);
+    }
+}
+
 void Application::TryStartPendingMusic() {
     if (pending_music_url_.empty() || starting_pending_music_) {
         return;
     }
     if (music_player_.IsBusy() || notify_player_.IsBusy()) {
+        ESP_LOGW(TAG, "Pending music waiting: player busy (music=%d notify=%d) state=%s",
+                 music_player_.IsBusy() ? 1 : 0, notify_player_.IsBusy() ? 1 : 0,
+                 GetDeviceStateName());
         return;
     }
 
@@ -1714,6 +1754,7 @@ void Application::TryStartPendingMusic() {
 
     std::string url = std::move(pending_music_url_);
     pending_music_url_.clear();
+    DisarmPendingMusicRetry();
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     audio_service_.EnableVoiceProcessing(false);
@@ -1865,6 +1906,10 @@ void Application::PrevMusic() {
 int Application::MusicQueueLength() const {
     // 列表常驻：长度恒等于播放列表条目数（索引式循环不消费）。
     return static_cast<int>(music_queue_.size());
+}
+
+const char* Application::GetDeviceStateName() const {
+    return DeviceStateMachine::GetStateName(GetDeviceState());
 }
 
 void Application::PauseMusic() {

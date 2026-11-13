@@ -262,6 +262,9 @@ void McpServer::AddCommonTools() {
                     : app.GetMusicRepeatMode() == Application::MusicRepeatMode::kList ? "list"
                                                                                      : "off");
                 cJSON_AddStringToObject(json, "current_url", app.GetCurrentMusicUrl().c_str());
+                cJSON_AddStringToObject(json, "device_state", app.GetDeviceStateName());
+                cJSON_AddBoolToObject(json, "pending", app.HasPendingMusic());
+                cJSON_AddBoolToObject(json, "busy", app.IsMusicBusy());
                 return json;
             });
 

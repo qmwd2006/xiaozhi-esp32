@@ -38,6 +38,7 @@
 #define MAIN_EVENT_STATE_CHANGED        (1 << 12)
 #define MAIN_EVENT_PLAYBACK_DRAINED     (1 << 13)
 #define MAIN_EVENT_STARTUP_HINT_TIMEOUT (1 << 14)
+#define MAIN_EVENT_PENDING_MUSIC_RETRY  (1 << 15)
 
 enum AecMode {
     kAecOff,
@@ -152,6 +153,12 @@ public:
     int MusicDurationSeconds() const;
     // 当前播放队列中剩余（含正在播放）的曲目数。
     int MusicQueueLength() const;
+    // 诊断：设备状态机状态名（idle/listening/speaking/connecting...）。
+    const char* GetDeviceStateName() const;
+    // 诊断：是否有因非 Idle 状态而延迟的待播请求。
+    bool HasPendingMusic() const { return !pending_music_url_.empty(); }
+    // 诊断：音乐 worker 是否忙（HTTP/解码未退出）。
+    bool IsMusicBusy() const { return music_player_.IsBusy(); }
 
     // 循环模式，对齐小米音箱的「单曲循环 / 列表循环 / 顺序播放」。
     enum class MusicRepeatMode { kOff = 0, kList = 1, kOne = 2 };
@@ -179,6 +186,7 @@ private:
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
     esp_timer_handle_t startup_wake_word_hint_timer_ = nullptr;
+    esp_timer_handle_t pending_music_retry_timer_ = nullptr;
     DeviceStateMachine state_machine_;
     ListeningMode listening_mode_ = kListeningModeAutoStop;
     AecMode aec_mode_ = kAecOff;
@@ -246,6 +254,9 @@ private:
     // 设备处于 Speaking/Listening 时先记录待播地址，回到 Idle 后再真正开始，
     // 避免音乐刚起播就被状态切换打断（TTS 播报“正在播放…”的常见场景）。
     void TryStartPendingMusic();
+    // 待播请求存在时启用/停用周期重试定时器（避免依赖状态变化）。
+    void ArmPendingMusicRetry();
+    void DisarmPendingMusicRetry();
     void HandleNetworkDisconnectedEvent();
     void HandleActivationDoneEvent();
     void HandleWakeWordDetectedEvent();
