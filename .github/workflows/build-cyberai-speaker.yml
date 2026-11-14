@@ -1,0 +1,65 @@
+name: Build CyberAI Speaker firmware
+
+# 手动触发：仓库页面 Actions -> Build CyberAI Speaker firmware -> Run workflow
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build cyberai-speaker
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:release-v6.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        shell: bash
+        env:
+          BOARD: cyberai-speaker
+          VARIANT: cyberai-spk-s3-wifi
+        run: |
+          source "$IDF_PATH/export.sh"
+          # 中文语言 + 你好乐鑫唤醒词
+          python scripts/build.py "$BOARD" --name "$VARIANT" \
+            --language zh-CN --wake-word wn9_hilexin
+          echo "==== 产物 ===="
+          ls -lh build/merged-binary.bin build/xiaozhi.bin 2>/dev/null || true
+
+      - name: Prepare OTA app image
+        shell: bash
+        run: |
+          set -euo pipefail
+          # OTA 需要「纯 app image」（从 app 分区起始，magic 0xE9），
+          # 不能直接用 merged-binary.bin（从 0x0 开始，含 bootloader/分区表/assets）。
+          # ESP-IDF 对 project(xiaozhi) 原生产出 build/xiaozhi.bin；
+          # 若缺失则用脚本按分区表切出，并校验镜像头与 SHA-256。
+          if [[ -f build/xiaozhi.bin ]]; then
+            echo "使用 IDF 产出的 build/xiaozhi.bin"
+          else
+            python3 scripts/extract_app_image.py \
+              --merged build/merged-binary.bin \
+              --output build/xiaozhi.bin
+          fi
+          python3 scripts/extract_app_image.py \
+            --merged build/merged-binary.bin \
+            --output /tmp/xiaozhi_verify.bin
+          cmp build/xiaozhi.bin /tmp/xiaozhi_verify.bin
+          echo "OTA app image 校验通过"
+          ls -lh build/xiaozhi.bin
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v7
+        with:
+          name: xiaozhi-cyberai-spk-s3-wifi_${{ github.sha }}
+          path: |
+            build/merged-binary.bin
+            build/xiaozhi.bin
+          if-no-files-found: error
+          retention-days: 30
