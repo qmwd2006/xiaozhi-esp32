@@ -16,8 +16,14 @@
   设备升级后哈希一致即停止，天然自终止，不会无限 OTA。
 - 只在服务端版本不低于设备版本时才允许 force，避免降级。
 
+- 支持按板型分发：`--bin <board_type>=<path>` 可重复指定，设备上报的
+  board.type 命中则下发该板固件。未命中时若配置了 `--default-bin` 则用之，
+  否则返回 404（避免把 A 板固件刷到 B 板）。单板用法 `--bin path` 仍然兼容。
+
 用法：
     python3 ota_server.py [--port 8066] [--bin path/to/xiaozhi.bin]
+    python3 ota_server.py --bin esp32-s3-audio-board=a.bin \
+                          --bin cyberai-speaker=b.bin
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ import struct
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 logger = logging.getLogger("ota_server")
 
@@ -42,6 +49,11 @@ BIN_PATH: Path | None = None
 FIRMWARE_VERSION = "2.5.3"
 PUBLIC_BASE_URL = ""
 ALWAYS_FORCE = False
+
+# 按板型分发的固件表：board_type -> app image 路径。
+# 单板模式下用 DEFAULT_BOARD_KEY 作为唯一键，兼容旧的 --bin path 用法。
+BOARD_BINS: dict[str, Path] = {}
+DEFAULT_BOARD_KEY = ""
 
 # 旁路 MQTT 控制通道（可选）。仅当配置了 endpoint 时下发 mqtt_control 段，
 # 官方/纯 ws 场景保持 None，设备不会启动旁路客户端。
@@ -103,11 +115,36 @@ def _firmware_is_newer_or_equal(device: str, server: str) -> bool:
     return server_parts >= device_parts
 
 
+def _resolve_bin(
+    board_type: str,
+    bins: dict[str, Path] | None = None,
+    default_key: str | None = None,
+) -> Path | None:
+    """按设备上报的 board.type 选择固件；返回 None 表示没有匹配项。"""
+    registry = BOARD_BINS if bins is None else bins
+    default = DEFAULT_BOARD_KEY if default_key is None else default_key
+    key = (board_type or "").strip().lower()
+    if key and key in registry:
+        return registry[key]
+    # 单板模式：只有一个固件时，无论设备报什么板型都用它（兼容旧行为）
+    if default and default in registry:
+        return registry[default]
+    return None
+
+
 class OtaHandler(BaseHTTPRequestHandler):
     server_version = "xiaozhi-ota/1.0"
 
     def log_message(self, fmt: str, *args) -> None:
         logger.info("%s - %s", self.address_string(), fmt % args)
+
+    @property
+    def _registry(self) -> dict[str, Path]:
+        return getattr(self.server, "board_bins", BOARD_BINS)
+
+    @property
+    def _default_key(self) -> str:
+        return getattr(self.server, "default_board_key", DEFAULT_BOARD_KEY)
 
     # ---------- 响应工具 ----------
 
@@ -133,12 +170,20 @@ class OtaHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
         if path == "/health":
+            bins = {
+                key: {
+                    "path": str(p),
+                    "size": p.stat().st_size if p.exists() else 0,
+                    "version": _read_app_desc(p).get("version", "") if p.exists() else "",
+                }
+                for key, p in self._registry.items()
+            }
             self._send_json(
                 {
                     "ok": True,
                     "firmware_version": FIRMWARE_VERSION,
-                    "bin": str(BIN_PATH) if BIN_PATH else None,
-                    "bin_size": BIN_PATH.stat().st_size if BIN_PATH and BIN_PATH.exists() else 0,
+                    "default_board": self._default_key or None,
+                    "bins": bins,
                 }
             )
             return
@@ -186,18 +231,25 @@ class OtaHandler(BaseHTTPRequestHandler):
                         f" (board={reported_board})" if reported_board else "",
                         f" sha256={reported_sha[:12]}…" if reported_sha else "")
 
-        if BIN_PATH is None or not BIN_PATH.exists():
-            logger.error("固件文件不存在: %s", BIN_PATH)
+        bin_path = _resolve_bin(reported_board, self._registry, self._default_key)
+        if bin_path is None:
+            logger.warning("设备板型 %r 没有对应固件（已配置: %s），拒绝下发",
+                           reported_board, ", ".join(sorted(self._registry)) or "无")
+            self._send_json({"error": "no firmware for board"}, 404)
+            return
+        if not bin_path.exists():
+            logger.error("固件文件不存在: %s", bin_path)
             self._send_json({"error": "firmware not available"}, 503)
             return
 
+        bin_desc = _read_app_desc(bin_path)
+        version = bin_desc.get("version") or FIRMWARE_VERSION
         firmware = {
-            "version": FIRMWARE_VERSION,
-            "url": f"{PUBLIC_BASE_URL}/xiaozhi.bin",
+            "version": version,
+            "url": f"{PUBLIC_BASE_URL}/xiaozhi.bin?board={reported_board}",
         }
 
         # 同版本号重新构建时，用 bin 内嵌的 app 描述判断设备是否已经是这份固件。
-        bin_desc = _read_app_desc(BIN_PATH)
         same_build = bool(
             reported_sha
             and bin_desc.get("elf_sha256")
@@ -205,7 +257,7 @@ class OtaHandler(BaseHTTPRequestHandler):
         )
         force = False
         if not same_build and _firmware_is_newer_or_equal(
-                reported_version, FIRMWARE_VERSION):
+                reported_version, version):
             if ALWAYS_FORCE or (reported_sha and bin_desc.get("elf_sha256")):
                 force = True
                 firmware["force"] = 1
@@ -240,16 +292,26 @@ class OtaHandler(BaseHTTPRequestHandler):
                 "publish_topic": f"xiaozhi/{mac}/up",
             }
             logger.info("下发 mqtt_control: %s (mac=%s)", MQTT_CONTROL_ENDPOINT, mac)
-        logger.info("返回固件 %s%s -> %s", FIRMWARE_VERSION,
-                    " (force)" if force else "", firmware["url"])
+        logger.info("返回固件 %s%s -> %s (board=%s)", version,
+                    " (force)" if force else "", firmware["url"],
+                    reported_board or self._default_key or "?")
         self._send_json(payload)
 
     def _serve_bin(self) -> None:
-        if BIN_PATH is None or not BIN_PATH.exists():
-            self._send_text("firmware not available", 503)
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        board = ""
+        for part in query.split("&"):
+            if part.startswith("board="):
+                board = part[len("board="):]
+                break
+        board = unquote(board)
+        bin_path = _resolve_bin(board, self._registry, self._default_key)
+        if bin_path is None or not bin_path.exists():
+            self._send_text("firmware not available", 404)
             return
-        data = BIN_PATH.read_bytes()
-        logger.info("下发固件: %s (%d bytes)", BIN_PATH.name, len(data))
+        data = bin_path.read_bytes()
+        logger.info("下发固件: %s (board=%s, %d bytes)",
+                    bin_path.name, board or self._default_key or "?", len(data))
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(data)))
@@ -263,11 +325,14 @@ def main() -> int:
     global WEBSOCKET_URL, WEBSOCKET_TOKEN
     global MQTT_CONTROL_ENDPOINT, MQTT_CONTROL_USERNAME, MQTT_CONTROL_PASSWORD
     global MQTT_CONTROL_KEEPALIVE
+    global BOARD_BINS, DEFAULT_BOARD_KEY
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8066)
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--bin", default="xiaozhi.bin")
+    parser.add_argument("--bin", action="append", default=None,
+                        help="固件 app image。可写成 <board_type>=<path> 按板型分发，"
+                             "可重复；写成 <path> 时作为全局默认固件")
     parser.add_argument("--version", default=None,
                         help="覆盖固件版本号；默认从 bin 内嵌的 app 描述读取")
     parser.add_argument("--force", action="store_true",
@@ -293,7 +358,6 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
 
-    BIN_PATH = Path(args.bin).resolve()
     PUBLIC_BASE_URL = f"http://{args.public_host}:{args.port}"
     ALWAYS_FORCE = args.force
     WEBSOCKET_URL = args.websocket_url
@@ -303,32 +367,56 @@ def main() -> int:
     MQTT_CONTROL_PASSWORD = args.mqtt_control_password
     MQTT_CONTROL_KEEPALIVE = args.mqtt_control_keepalive
 
-    if not BIN_PATH.exists():
-        logger.error("固件文件不存在: %s", BIN_PATH)
-        return 1
+    # 解析固件表：<board>=<path> 或 <path>（默认固件）
+    for entry in args.bin or ["xiaozhi.bin"]:
+        board_type, sep, path_text = entry.partition("=")
+        if sep and board_type and path_text:
+            key = board_type.strip().lower()
+            path = Path(path_text).resolve()
+        else:
+            key = ""
+            path = Path(entry).resolve()
 
-    size = BIN_PATH.stat().st_size
-    with BIN_PATH.open("rb") as f:
-        head = f.read(32)
-    if not head or head[0] != 0xE9:
-        logger.error("不是合法 app image（magic 应为 0xE9）: %s", BIN_PATH)
-        return 1
+        if not path.exists():
+            logger.error("固件文件不存在: %s", path)
+            return 1
+        with path.open("rb") as f:
+            head = f.read(32)
+        if not head or head[0] != 0xE9:
+            logger.error("不是合法 app image（magic 应为 0xE9）: %s", path)
+            return 1
 
-    desc = _read_app_desc(BIN_PATH)
-    FIRMWARE_VERSION = args.version or desc.get("version") or "0.0.0"
+        desc = _read_app_desc(path)
+        if key:
+            BOARD_BINS[key] = path
+            logger.info("板型 %-24s -> %s (%d bytes, %s)", key, path,
+                        path.stat().st_size, desc.get("version", "?"))
+        else:
+            DEFAULT_BOARD_KEY = key or "default"
+            BOARD_BINS.setdefault(DEFAULT_BOARD_KEY, path)
+            logger.info("默认固件 -> %s (%d bytes, %s)", path,
+                        path.stat().st_size, desc.get("version", "?"))
 
-    logger.info("固件: %s (%d bytes)", BIN_PATH, size)
-    logger.info("版本: %s", FIRMWARE_VERSION)
-    if desc:
+    # 兼容旧接口：BIN_PATH 指向默认固件（如有）
+    BIN_PATH = BOARD_BINS.get(DEFAULT_BOARD_KEY) if DEFAULT_BOARD_KEY else None
+    if BIN_PATH is not None:
+        desc = _read_app_desc(BIN_PATH)
+        FIRMWARE_VERSION = args.version or desc.get("version") or "0.0.0"
         logger.info("构建: %s %s, elf_sha256=%s", desc.get("date", ""), desc.get("time", ""),
                     desc.get("elf_sha256", "")[:16])
+    if len(BOARD_BINS) == 1:
+        FIRMWARE_VERSION = args.version or _read_app_desc(
+            next(iter(BOARD_BINS.values()))).get("version") or FIRMWARE_VERSION
+
     logger.info("同版本重构建升级: %s", "总是" if ALWAYS_FORCE else "按 sha256 差异自动判定")
     logger.info("OTA 地址: %s/xiaozhi/ota/", PUBLIC_BASE_URL)
-    logger.info("固件下载: %s/xiaozhi.bin", PUBLIC_BASE_URL)
+    logger.info("固件下载: %s/xiaozhi.bin?board=<board_type>", PUBLIC_BASE_URL)
     logger.info("下发 websocket: %s", WEBSOCKET_URL)
     logger.info("旁路 MQTT 控制: %s", MQTT_CONTROL_ENDPOINT or "未启用")
 
     server = ThreadingHTTPServer((args.host, args.port), OtaHandler)
+    server.board_bins = BOARD_BINS
+    server.default_board_key = DEFAULT_BOARD_KEY
     try:
         server.serve_forever()
     except KeyboardInterrupt:
