@@ -54,8 +54,23 @@ Ota::~Ota() {
 }
 
 std::string Ota::GetCheckVersionUrl() {
-    Settings settings("wifi", false);
+    Settings settings("wifi", true);
     std::string url = settings.GetString("ota_url");
+    if (!url.empty()) {
+        // 一次性迁移：早期固件把 OTA 地址写进了 NVS，优先于编译默认值。
+        // 只有历史白名单里的旧地址会被清除，其它自定义地址保持不动。
+        static constexpr const char* kLegacyOtaHosts[] = {
+            "192.168.31.236",  // 开发机上的临时 OTA 服务
+        };
+        for (const char* host : kLegacyOtaHosts) {
+            if (url.find(host) != std::string::npos) {
+                ESP_LOGW(TAG, "Clearing legacy OTA URL from NVS: %s", url.c_str());
+                settings.EraseKey("ota_url");
+                url.clear();
+                break;
+            }
+        }
+    }
     if (url.empty()) {
         url = CONFIG_OTA_URL;
     }
