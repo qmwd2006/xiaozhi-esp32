@@ -105,6 +105,15 @@ public:
     void StartListening();
 
     /**
+     * Start listening with an explicit mode (event-based, thread-safe).
+     * Used by the MQTT control channel to emulate wake-word listening.
+     */
+    void StartListening(ListeningMode mode);
+
+    // Default listening mode for this device (realtime when AEC is on).
+    ListeningMode GetDefaultListeningMode() const;
+
+    /**
      * Stop listening (event-based, thread-safe)
      * Sends MAIN_EVENT_STOP_LISTENING to be handled in Run()
      */
@@ -192,6 +201,9 @@ private:
     esp_timer_handle_t pending_music_retry_timer_ = nullptr;
     DeviceStateMachine state_machine_;
     ListeningMode listening_mode_ = kListeningModeAutoStop;
+    // MQTT 显式指定的聆听模式（带参 StartListening 使用），否则回退 manual。
+    ListeningMode pending_listening_mode_ = kListeningModeAutoStop;
+    bool has_pending_listening_mode_ = false;
     AecMode aec_mode_ = kAecOff;
     std::string last_error_message_;
     std::string startup_wake_word_hint_message_;
@@ -319,7 +331,6 @@ private:
     void InitializeProtocol();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
-    ListeningMode GetDefaultListeningMode() const;
     
     // State change handler called by state machine
     void OnStateChanged(DeviceState old_state, DeviceState new_state);

@@ -206,7 +206,21 @@ void MqttControl::HandleMessage(const std::string& topic, const std::string& pay
                 app.Schedule([&app, url]() { app.PlayMusicNow(url); });
             }
         } else if (act == "listen") {
-            app.Schedule([&app]() { app.StartListening(); });
+            // 可选 mode: auto|manual|realtime；缺省用设备默认（AEC 开时为 realtime），
+            // 以便命令模拟的聆听行为与真实唤醒一致。
+            ListeningMode mode = app.GetDefaultListeningMode();
+            cJSON* mode_item = cJSON_GetObjectItem(root, "mode");
+            if (cJSON_IsString(mode_item)) {
+                std::string m = mode_item->valuestring;
+                if (m == "auto") {
+                    mode = kListeningModeAutoStop;
+                } else if (m == "manual") {
+                    mode = kListeningModeManualStop;
+                } else if (m == "realtime") {
+                    mode = kListeningModeRealtime;
+                }
+            }
+            app.Schedule([&app, mode]() { app.StartListening(mode); });
         } else if (act == "stop") {
             app.Schedule([&app]() { app.StopListening(); });
         } else if (act == "reboot") {

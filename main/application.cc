@@ -978,7 +978,17 @@ void Application::DismissAlert() {
 
 void Application::ToggleChatState() { xEventGroupSetBits(event_group_, MAIN_EVENT_TOGGLE_CHAT); }
 
-void Application::StartListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING); }
+void Application::StartListening() {
+    // 无参版本保持旧语义（手动停止模式），供各板物理按键使用。
+    has_pending_listening_mode_ = false;
+    xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING);
+}
+
+void Application::StartListening(ListeningMode mode) {
+    pending_listening_mode_ = mode;
+    has_pending_listening_mode_ = true;
+    xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING);
+}
 
 void Application::StopListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING); }
 
@@ -1068,17 +1078,22 @@ void Application::HandleStartListeningEvent() {
         return;
     }
 
+    // 带参 StartListening(mode) 指定的模式优先；否则用旧的手动停止语义。
+    const ListeningMode mode = has_pending_listening_mode_ ? pending_listening_mode_
+                                                            : kListeningModeManualStop;
+    has_pending_listening_mode_ = false;
+
     if (state == kDeviceStateIdle) {
         if (!protocol_->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
             // Schedule to let the state change be processed first (UI update)
-            Schedule([this]() { ContinueOpenAudioChannel(kListeningModeManualStop); });
+            Schedule([this, mode]() { ContinueOpenAudioChannel(mode); });
             return;
         }
-        SetListeningMode(kListeningModeManualStop);
+        SetListeningMode(mode);
     } else if (state == kDeviceStateSpeaking) {
         AbortSpeaking(kAbortReasonNone);
-        SetListeningMode(kListeningModeManualStop);
+        SetListeningMode(mode);
     }
 }
 

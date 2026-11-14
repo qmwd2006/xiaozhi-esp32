@@ -214,6 +214,30 @@ int main() {{
                       (ROOT / "main/mcp_server.cc").read_text())
 
 
+class ListenModeGuardTests(unittest.TestCase):
+    """Guard the MQTT listen-mode plumbing (board keys keep manual semantics)."""
+
+    def test_start_listening_event_uses_pending_mode(self):
+        body = definition(APPLICATION, "void Application::HandleStartListeningEvent()")
+        self.assertIn("has_pending_listening_mode_ ? pending_listening_mode_", body)
+        self.assertIn("kListeningModeManualStop", body)
+
+    def test_param_start_listening_sets_pending_mode(self):
+        body = definition(APPLICATION, "void Application::StartListening(ListeningMode mode)")
+        self.assertIn("pending_listening_mode_ = mode;", body)
+        self.assertIn("has_pending_listening_mode_ = true;", body)
+
+    def test_no_arg_start_listening_keeps_manual(self):
+        body = definition(APPLICATION, "void Application::StartListening()")
+        self.assertIn("has_pending_listening_mode_ = false;", body)
+
+    def test_mqtt_listen_maps_mode(self):
+        src = (ROOT / "main/mqtt_control.cc").read_text()
+        self.assertIn('if (m == "realtime")', src)
+        self.assertIn("kListeningModeRealtime", src)
+        self.assertIn("GetDefaultListeningMode()", src)
+
+
 class MusicStateSourceGuardTests(unittest.TestCase):
     """Guard the mirrored arithmetic against silent drift in application.cc."""
 
