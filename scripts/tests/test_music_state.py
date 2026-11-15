@@ -300,5 +300,57 @@ class MusicStateSourceGuardTests(unittest.TestCase):
         self.assertIn("total_bytes_ * 8 / bitrate_bps_", duration)
 
 
+class VolumeScaleTests(unittest.TestCase):
+    """Verify the logical->hardware volume scaling used by the audio board codec."""
+
+    CODEC = ROOT / "main/boards/waveshare/esp32-s3-audio-board/s3_audio_board_codec.cc"
+
+    def compile_and_assert(self, max_volume, body):
+        compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
+        if compiler is None:
+            self.skipTest("requires a host C++ compiler")
+        fn = definition(self.CODEC.read_text(), "int S3AudioBoardCodec::ToHardwareVolume(int logical)")
+        fn = fn.replace("int S3AudioBoardCodec::ToHardwareVolume(int logical)",
+                        "int ToHardwareVolume(int logical)", 1)
+        program = f"""
+#include <cassert>
+#include <algorithm>
+#define AUDIO_OUTPUT_MAX_VOLUME {max_volume}
+{fn}
+int main() {{
+{body}
+    return 0;
+}}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            src = pathlib.Path(directory) / "vol.cc"
+            src.write_text(program, encoding="utf-8")
+            binary = pathlib.Path(directory) / "vol"
+            compiled = subprocess.run([compiler, "-std=c++17", str(src), "-o", str(binary)],
+                                      capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_scale_65(self):
+        self.compile_and_assert(65, """
+    assert(ToHardwareVolume(0) == 0);
+    assert(ToHardwareVolume(50) == 33);
+    assert(ToHardwareVolume(100) == 65);
+    assert(ToHardwareVolume(150) == 65);
+    assert(ToHardwareVolume(-10) == 0);
+""")
+
+    def test_scale_100_is_identity(self):
+        self.compile_and_assert(100, """
+    assert(ToHardwareVolume(0) == 0);
+    assert(ToHardwareVolume(70) == 70);
+    assert(ToHardwareVolume(100) == 100);
+""")
+
+    def test_max_volume_is_configurable_macro(self):
+        self.assertIn("AUDIO_OUTPUT_MAX_VOLUME", (ROOT / "main/boards/waveshare/esp32-s3-audio-board/config.h").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

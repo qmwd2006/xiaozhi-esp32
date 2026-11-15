@@ -6,6 +6,8 @@
 
 #define AUDIO_INPUT_SAMPLE_RATE     24000
 #define AUDIO_OUTPUT_SAMPLE_RATE    24000
+// 逻辑音量 0-100 对应的硬件音量上限（0-100）。改这个数字即可限制最大响度。
+#define AUDIO_OUTPUT_MAX_VOLUME     65
 
 #define BOOT_BUTTON_GPIO            GPIO_NUM_0
 #define BUILTIN_LED_GPIO            GPIO_NUM_38
