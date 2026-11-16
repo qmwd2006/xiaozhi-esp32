@@ -213,7 +213,10 @@ public:
     }
 
     virtual Led* GetLed() override {
-        static CircularStrip led(BUILTIN_LED_GPIO, 6);
+        // 板上环形 RGB 为 7 颗 WS2812B（原理图 LED_DIN 链共 7 颗），此前误写为
+        // 6 颗，第 7 颗从不更新、停在旧颜色。另有一颗独立的侧面绿光 LED1 由
+        // 充电 IC 的 STAT 脚驱动，不受固件控制（充满/充电时常亮属正常）。
+        static CircularStrip led(BUILTIN_LED_GPIO, 7);
         return &led;
     }
 
