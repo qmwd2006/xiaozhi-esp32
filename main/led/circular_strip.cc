@@ -195,9 +195,15 @@ void CircularStrip::OnStateChanged() {
             Blink(color, 500);
             break;
         }
-        case kDeviceStateIdle:
-            FadeOut(50);
+        case kDeviceStateIdle: {
+            // 直接熄灭，不用 FadeOut：FadeOut 的周期回调在锁内调用
+            // esp_timer_stop(strip_timer_) 停止自身定时器，在 ESP_TIMER_TASK
+            // 上下文中属于未定义行为，实测导致进 Idle 后灯（尤其 Speaking 的
+            // 绿色全亮）不再继续衰减而常亮。这里一次性写入全 0 并刷新即可。
+            StripColor off = { 0, 0, 0 };
+            SetAllColor(off);
             break;
+        }
         case kDeviceStateConnecting: {
             StripColor color = { low_brightness_, low_brightness_, default_brightness_ };
             SetAllColor(color);
