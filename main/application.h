@@ -152,6 +152,8 @@ public:
                        const std::string& titles = "");
     // 清空播放列表（停止播放并清除队列）。
     void ClearMusicQueue();
+    // 结束交互并进入待机：停止音乐、关闭音频通道、强制回到 Idle（仅唤醒词可再次激活）。
+    void EnterStandby();
     // 当前播放曲目 URL（可能为空）。
     std::string GetCurrentMusicUrl() const { return current_music_url_; }
     // 当前播放曲目标题（可能为空）。
@@ -241,6 +243,8 @@ private:
     bool music_user_paused_ = false;
     // 用户显式停止：worker 退出回调不得据此续播/循环（stop 只停当前曲、保留列表）。
     bool music_user_stopped_ = false;
+    // 已请求进入待机：等正在播报的道别 TTS 结束时（tts stop）强制回到 Idle 而非 Listening。
+    bool standby_pending_ = false;
     // 循环模式：kOff 播完队列即停；kList 队列循环；kOne 单曲循环。
     // 默认整队循环（列表常驻）。
     MusicRepeatMode music_repeat_mode_ = MusicRepeatMode::kList;

@@ -187,6 +187,15 @@ void McpServer::AddCommonTools() {
                 return true;
             });
 
+    AddTool("self.device.standby",
+            "End the conversation and enter standby: stop music, close the audio channel, "
+            "and return to idle. The device will NOT auto-listen again; only the wake word "
+            "can reactivate it. Use for goodbye/dismissal requests (退下/关机/关闭/再见).",
+            PropertyList(), [](const PropertyList& properties) -> ReturnValue {
+                Application::GetInstance().EnterStandby();
+                return true;
+            });
+
     AddTool("self.music.pause",
             "Pause the current song, keeping the playback position.",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {

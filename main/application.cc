@@ -825,7 +825,16 @@ void Application::InitializeProtocol() {
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this]() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
+                        if (standby_pending_) {
+                            // 已请求待机：道别语播完后强制回到 Idle，而不是自动聆听。
+                            standby_pending_ = false;
+                            if (protocol_ != nullptr && protocol_->IsAudioChannelOpened()) {
+                                protocol_->CloseAudioChannel();
+                            }
+                            SetDeviceState(kDeviceStateIdle);
+                            DowngradeToLowPower();
+                            ESP_LOGI(TAG, "Standby entered after farewell TTS");
+                        } else if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
                             SetDeviceState(kDeviceStateListening);
@@ -1542,6 +1551,39 @@ void Application::StopMusic() {
     }
     ESP_LOGI(TAG, "Music playback stopped (playlist kept, %u songs)",
              static_cast<unsigned>(music_queue_.size()));
+}
+
+void Application::EnterStandby() {
+    // 结束交互：停掉音乐（保留列表，之后可再播），关闭音频通道并强制回到 Idle。
+    // 回到 Idle 后只会保留唤醒词检测，必须重新唤醒才能再次对话。
+    // 若此刻正在播报道别 TTS（Speaking），则先打标记，等 tts stop 时再切 Idle，
+    // 避免打断道别语（见 OnIncomingJson 的 tts stop 分支）。
+    music_user_stopped_ = true;
+    current_music_url_.clear();
+    finished_music_url_.clear();
+    music_paused_by_dialog_ = false;
+    music_user_paused_ = false;
+    music_resume_url_.clear();
+    music_resume_position_ = 0;
+    pending_music_url_.clear();
+    music_player_.Stop();
+    audio_service_.ResetDecoder();
+    Board::GetInstance().GetDisplay()->SetChatMessage("assistant", "");
+
+    if (GetDeviceState() == kDeviceStateSpeaking) {
+        // 道别语还在播：标记，待 tts stop 时切 Idle。
+        standby_pending_ = true;
+        ESP_LOGI(TAG, "Standby requested while speaking; will enter Idle after TTS ends");
+        return;
+    }
+
+    standby_pending_ = false;
+    if (protocol_ != nullptr && protocol_->IsAudioChannelOpened()) {
+        protocol_->CloseAudioChannel();
+    }
+    SetDeviceState(kDeviceStateIdle);
+    DowngradeToLowPower();
+    ESP_LOGI(TAG, "Entered standby (Idle); wake word required to resume");
 }
 
 void Application::ClearMusicQueue() {
