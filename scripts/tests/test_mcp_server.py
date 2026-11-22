@@ -37,6 +37,11 @@ class McpServerTest(unittest.TestCase):
                 #include <string>
                 #include <utility>
                 #include <vector>
+                struct AudioService {
+                    bool IsWakeWordRunning() const { return true; }
+                    bool IsAfeWakeWord() const { return true; }
+                    bool IsAudioProcessorRunning() const { return false; }
+                };
                 class Application {
                 public:
                     std::vector<std::function<void()>> pending;
@@ -78,6 +83,9 @@ class McpServerTest(unittest.TestCase):
                     bool IsMusicBusy() const { return false; }
                     bool IsMusicPlaying() const { return false; }
                     bool IsMusicPaused() const { return false; }
+                    const char* GetDeviceStateName() const { return "idle"; }
+                    AudioService& GetAudioService() { return audio_; }
+                    AudioService audio_;
                     int MusicPositionSeconds() const { return 0; }
                     int MusicDurationSeconds() const { return 0; }
                     int MusicQueueLength() const { return 0; }
@@ -102,11 +110,17 @@ class McpServerTest(unittest.TestCase):
                 #pragma once
                 #include <cstdlib>
                 [[noreturn]] inline void esp_system_abort(const char*) { std::abort(); }
+                inline unsigned esp_get_free_heap_size() { return 0; }
+                inline unsigned esp_get_minimum_free_heap_size() { return 0; }
             ''',
             "esp_log.h": "\n".join(
                 f"#define ESP_LOG{level}(...) ((void)0)" for level in "EWID"
             ),
             "esp_pthread.h": "",
+            "esp_timer.h": r'''
+                #pragma once
+                inline long long esp_timer_get_time() { return 0; }
+            ''',
             "esp_app_desc.h": r'''
                 struct esp_app_desc_t { const char* version; };
                 inline const esp_app_desc_t* esp_app_get_description() {
