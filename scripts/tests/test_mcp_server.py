@@ -74,7 +74,9 @@ class McpServerTest(unittest.TestCase):
                     void ResumeMusic() {}
                     bool SeekMusic(int) { return true; }
                     bool EnqueueMusic(std::string, std::string = "") { return true; }
-                    bool SetMusicQueue(const std::string&, const std::string& = "") { return true; }
+                    bool SetMusicQueue(const std::string&, const std::string& = "", int = 0) { return true; }
+                    bool PlayMusicIndex(int) { return true; }
+                    std::string MusicQueueJson(int = 20) const { return "{\"length\":0,\"items\":[]}"; }
                     void ClearMusicQueue() {}
                     void EnterStandby() {}
                     std::string GetCurrentMusicUrl() const { return {}; }

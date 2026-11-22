@@ -216,17 +216,48 @@ void McpServer::AddCommonTools() {
             "  `urls`: Newline-separated HTTP(S) audio URLs.\n"
             "  `titles`: Optional newline-separated titles aligned with urls (same order).",
             PropertyList({Property("urls", kPropertyTypeString),
-                          Property("titles", kPropertyTypeString, "")}),
+                          Property("titles", kPropertyTypeString, ""),
+                          Property("start_index", kPropertyTypeInteger, 0, 200)}),
             [](const PropertyList& properties) -> ReturnValue {
                 auto urls = properties["urls"].value<std::string>();
                 auto titles = properties["titles"].value<std::string>();
-                if (!Application::GetInstance().SetMusicQueue(urls, titles)) {
+                int start = properties["start_index"].value<int>();
+                if (!Application::GetInstance().SetMusicQueue(urls, titles, start)) {
                     return "{\"success\": false, \"message\": \"没有有效的播放地址\"}";
                 }
                 return "{\"success\": true, \"message\": \"已设置播放列表\"}";
             });
 
     // enqueue_url：加入播放列表（当前曲目继续，播完接这首）。
+    AddTool("self.music.play_index",
+            "Jump to the N-th item (0-based) of the current play queue and play it.\n"
+            "Args:\n"
+            "  `index`: queue index, 0 = first item.",
+            PropertyList({Property("index", kPropertyTypeInteger, 0, 200)}),
+            [](const PropertyList& properties) -> ReturnValue {
+                int index = properties["index"].value<int>();
+                if (!Application::GetInstance().PlayMusicIndex(index)) {
+                    return "{\"ok\": false, \"error\": \"索引越界或播放队列为空\"}";
+                }
+                return "{\"ok\": true}";
+            });
+
+    AddTool("self.music.queue",
+            "Inspect or clear the play queue.\n"
+            "  action=`list` returns {length, current_index, repeat, items:[{index,title,url}]}\n"
+            "  action=`clear` stops playback and removes all items.",
+            PropertyList({Property("action", kPropertyTypeString, "list"),
+                          Property("limit", kPropertyTypeInteger, 20, 1, 100)}),
+            [](const PropertyList& properties) -> ReturnValue {
+                auto action = properties["action"].value<std::string>();
+                if (action == "clear") {
+                    Application::GetInstance().ClearMusicQueue();
+                    return "{\"ok\": true}";
+                }
+                int limit = properties["limit"].value<int>();
+                return Application::GetInstance().MusicQueueJson(limit);
+            });
+
     AddTool("self.music.enqueue_url",
             "Append an audio URL to the END of the persistent play queue without interrupting "
             "the current song. `title` is optional human-readable name.",
@@ -245,14 +276,14 @@ void McpServer::AddCommonTools() {
             "Stop music playback but KEEP the playlist (so it can be resumed later).",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 Application::GetInstance().StopMusic();
-                return true;
+                return "{\"ok\": true}";
             });
 
     AddTool("self.music.clear_queue",
             "Clear the entire music playlist (stops playback and removes all queued songs).",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 Application::GetInstance().ClearMusicQueue();
-                return true;
+                return "{\"ok\": true}";
             });
 
     AddTool("self.device.standby",
@@ -268,28 +299,28 @@ void McpServer::AddCommonTools() {
             "Pause the current song, keeping the playback position.",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 Application::GetInstance().PauseMusic();
-                return true;
+                return "{\"ok\": true}";
             });
 
     AddTool("self.music.resume",
             "Resume the paused song from where it stopped.",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 Application::GetInstance().ResumeMusic();
-                return true;
+                return "{\"ok\": true}";
             });
 
     AddTool("self.music.next",
             "Skip to the next song in the play queue.",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 Application::GetInstance().NextMusic();
-                return true;
+                return "{\"ok\": true}";
             });
 
     AddTool("self.music.prev",
             "Go back to the previous song.",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
                 Application::GetInstance().PrevMusic();
-                return true;
+                return "{\"ok\": true}";
             });
 
     AddTool("self.music.seek",
@@ -297,8 +328,10 @@ void McpServer::AddCommonTools() {
             PropertyList({Property("position", kPropertyTypeInteger, 0, 86400)}),
             [](const PropertyList& properties) -> ReturnValue {
                 int position = properties["position"].value<int>();
-                bool ok = Application::GetInstance().SeekMusic(position);
-                return ok;
+                if (!Application::GetInstance().SeekMusic(position)) {
+                    return "{\"ok\": false, \"error\": \"当前没有在播的歌曲\"}";
+                }
+                return "{\"ok\": true}";
             });
 
     AddTool("self.music.skip",

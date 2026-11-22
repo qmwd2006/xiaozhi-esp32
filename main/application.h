@@ -149,7 +149,7 @@ public:
     bool EnqueueMusic(std::string audio_url, std::string title = "");
     // 整体替换播放列表（换行分隔的 URL 串；titles 同序换行分隔，可空）。
     bool SetMusicQueue(const std::string& newline_separated,
-                       const std::string& titles = "");
+                       const std::string& titles = "", int start_index = 0);
     // 清空播放列表（停止播放并清除队列）。
     void ClearMusicQueue();
     // 结束交互并进入待机：停止音乐、关闭音频通道、强制回到 Idle（仅唤醒词可再次激活）。
@@ -169,6 +169,10 @@ public:
     int MusicDurationSeconds() const;
     // 当前播放队列中剩余（含正在播放）的曲目数。
     int MusicQueueLength() const;
+    // 播放列表中第 index 首（0 起，越界取模）
+    bool PlayMusicIndex(int index);
+    // 队列快照 JSON：{"items":[{"index","title","url"}],"current_index","length","repeat"}
+    std::string MusicQueueJson(int limit = 20) const;
     // 诊断：设备状态机状态名（idle/listening/speaking/connecting...）。
     const char* GetDeviceStateName() const;
     // 诊断：是否有因非 Idle 状态而延迟的待播请求。

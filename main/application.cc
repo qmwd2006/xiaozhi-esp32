@@ -1532,14 +1532,16 @@ void Application::StopMusic() {
     // 用户明确"停止播放"：只停当前曲，保留播放列表与循环模式，之后可继续。
     // （清空列表请用 ClearMusicQueue / self.music.clear_queue。）
     music_user_stopped_ = true;
-    current_music_url_.clear();
+    // 保留 current_music_url_ 与播放位置：stop 之后 resume 应从原位置继续，
+    // 之前这里清空 url/位置，导致"停止再继续"只能从头播（服务端只能自己记位置补偿）。
+    if (!current_music_url_.empty()) {
+        music_resume_url_ = current_music_url_;
+        music_resume_position_ = music_player_.PositionSeconds();
+    }
     // 清掉「刚播完的曲目」，否则单曲循环会把这首重新入队再播。
     finished_music_url_.clear();
     music_paused_by_dialog_ = false;
     music_user_paused_ = false;
-    // 作废「对话打断后续播」的位置与待播请求，避免回到空闲又自己响起来。
-    music_resume_url_.clear();
-    music_resume_position_ = 0;
     pending_music_url_.clear();
     music_player_.Stop();
     audio_service_.ResetDecoder();
@@ -1643,7 +1645,7 @@ std::string Application::ResolveMusicTitle(const std::string& url,
 }
 
 bool Application::SetMusicQueue(const std::string& newline_separated,
-                                const std::string& titles) {
+                                const std::string& titles, int start_index) {
     // 标题与 URL 按行一一对应（缺失或空行视为未知）。
     std::vector<std::string> title_lines;
     {
@@ -1691,7 +1693,8 @@ bool Application::SetMusicQueue(const std::string& newline_separated,
         ESP_LOGW(TAG, "SetMusicQueue: no valid url");
         return false;
     }
-    Schedule([this, urls = std::move(urls), url_titles = std::move(url_titles)]() mutable {
+    const int wanted = start_index;
+    Schedule([this, urls = std::move(urls), url_titles = std::move(url_titles), wanted]() mutable {
         bool was_busy = music_player_.IsBusy();
         // 整体替换列表（索引式，列表本身不被消费）。
         music_queue_ = std::move(urls);
@@ -1707,19 +1710,24 @@ bool Application::SetMusicQueue(const std::string& newline_separated,
         ESP_LOGI(TAG, "SetMusicQueue: %u urls (busy=%d)",
                  static_cast<unsigned>(music_queue_.size()), was_busy ? 1 : 0);
 
+        const int n = static_cast<int>(music_queue_.size());
+        int start = wanted;
+        if (start < 0 || start >= n) {
+            start = 0;
+        }
         if (GetDeviceState() != kDeviceStateIdle) {
-            // 对话/播报中：停当前曲，待回 Idle 由待播机制从首曲起播新列表。
-            pending_music_url_ = music_queue_.front();
-            music_index_ = 0;
+            // 对话/播报中：停当前曲，待回 Idle 由待播机制从指定曲起播新列表。
+            pending_music_url_ = music_queue_[start];
+            music_index_ = start;
             ArmPendingMusicRetry();
             if (music_player_.IsBusy()) {
                 music_player_.Stop();
             }
             return;
         }
-        // 空闲：从新列表首曲开始播放。
-        if (!StartMusicAt(0)) {
-            ESP_LOGE(TAG, "SetMusicQueue: failed to start first song");
+        // 空闲：从指定曲开始播放。
+        if (!StartMusicAt(start)) {
+            ESP_LOGE(TAG, "SetMusicQueue: failed to start song %d", start);
         }
     });
     return true;
@@ -2042,6 +2050,53 @@ void Application::PrevMusic() {
     });
 }
 
+bool Application::PlayMusicIndex(int index) {
+    if (music_queue_.empty()) {
+        return false;
+    }
+    const int n = static_cast<int>(music_queue_.size());
+    if (index < 0 || index >= n) {
+        ESP_LOGW(TAG, "PlayMusicIndex: index %d 越界（共 %d 首）", index, n);
+        return false;
+    }
+    Schedule([this, index]() {
+        if (!music_player_.IsBusy() && GetDeviceState() == kDeviceStateIdle) {
+            StartMusicAt(index);
+            return;
+        }
+        // 对话/播报中：登记待播，回到 idle 再起播
+        music_user_stopped_ = false;
+        music_index_ = index;
+        pending_music_url_ = music_queue_[index];
+        ArmPendingMusicRetry();
+        if (music_player_.IsBusy()) {
+            music_player_.Stop();
+        }
+    });
+    return true;
+}
+
+std::string Application::MusicQueueJson(int limit) const {
+    if (limit <= 0) {
+        limit = 20;
+    }
+    int n = static_cast<int>(music_queue_.size());
+    std::string out = "{\"length\":" + std::to_string(n) +
+                      ",\"current_index\":" + std::to_string(music_index_) +
+                      ",\"repeat\":\"" +
+                      (music_repeat_mode_ == MusicRepeatMode::kOne ? "one"
+                       : music_repeat_mode_ == MusicRepeatMode::kOff ? "off" : "list") +
+                      "\",\"items\":[";
+    for (int i = 0; i < n && i < limit; ++i) {
+        if (i) out += ',';
+        std::string title = i < static_cast<int>(music_titles_.size()) ? music_titles_[i] : "";
+        out += "{\"index\":" + std::to_string(i) + ",\"title\":" + JsonEscape(title) +
+               ",\"url\":" + JsonEscape(music_queue_[i]) + "}";
+    }
+    out += "]}";
+    return out;
+}
+
 int Application::MusicQueueLength() const {
     // 列表常驻：长度恒等于播放列表条目数（索引式循环不消费）。
     return static_cast<int>(music_queue_.size());
@@ -2083,9 +2138,22 @@ void Application::ResumeMusic() {
             }
             music_user_stopped_ = false;
             audio_service_.ResetDecoder();
-            ESP_LOGI(TAG, "Music resume after stop: restart at index=%d", music_index_);
+            const int resume_pos = music_resume_position_;
+            music_resume_position_ = 0;
+            ESP_LOGI(TAG, "Music resume after stop: restart at index=%d pos=%d",
+                     music_index_, resume_pos);
             if (!StartMusicAt(music_index_)) {
                 ESP_LOGE(TAG, "Music resume failed to restart");
+                return;
+            }
+            if (resume_pos > 0) {
+                // 起播后跳到停止位置（等解码器拿到码率，稍等再 seek）
+                Schedule([this, resume_pos]() {
+                    vTaskDelay(pdMS_TO_TICKS(300));
+                    if (music_player_.IsActive()) {
+                        music_player_.Seek(resume_pos);
+                    }
+                });
             }
         });
         return;
