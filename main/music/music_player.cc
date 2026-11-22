@@ -214,7 +214,7 @@ void MusicPlayer::ParseId3(const uint8_t* data, size_t len) {
                                   (static_cast<uint32_t>(data[8] & 0x7F) << 7) |
                                   (static_cast<uint32_t>(data[9] & 0x7F));
         size_t pos = 10;
-        const size_t end = std::min(len, static_cast<size_t>(10) + tag_size);
+        const size_t end = std::min<size_t>(len, static_cast<size_t>(10) + tag_size);
         while (pos + 10 <= end) {
             const uint8_t* f = data + pos;
             if (f[0] == 0) {                     // 填充区，结束
@@ -757,7 +757,7 @@ void MusicPlayer::WorkerTask() {
                                 need_id3 = !id3_parsed_;
                             }
                             if (need_id3) {
-                                ParseId3(http_buf.data(), *size);
+                                ParseId3(reinterpret_cast<const uint8_t*>(http_buf.data()), *size);
                             }
                             std::lock_guard<std::mutex> lock(mutex_);
                             current_byte_ += *size;
