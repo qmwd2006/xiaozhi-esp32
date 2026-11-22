@@ -175,6 +175,8 @@ bool MusicPlayer::Start(std::string audio_url, uint32_t playback_id,
         completion_reported_ = false;
         total_bytes_ = 0;
         current_byte_ = 0;
+        played_samples_ = 0;
+        position_rate_ = 0;
         bitrate_bps_ = 0;
         seek_target_byte_ = -1;
         seek_pending_ = false;
@@ -280,6 +282,9 @@ bool MusicPlayer::Seek(int seconds) {
         return true;
     }
     int64_t byte = static_cast<int64_t>(bitrate_bps_) / 8 * seconds;
+    if (position_rate_ > 0) {
+        played_samples_ = static_cast<int64_t>(seconds) * position_rate_;
+    }
     if (byte > total_bytes_) {
         byte = total_bytes_;
     }
@@ -292,6 +297,10 @@ bool MusicPlayer::Seek(int seconds) {
 
 int MusicPlayer::PositionSeconds() const {
     std::lock_guard<std::mutex> lock(mutex_);
+    // 以"真正入队播放的采样数"为准：current_byte_ 是 HTTP 预读字节，会比实际播放快好几倍
+    if (position_rate_ > 0) {
+        return static_cast<int>(played_samples_ / position_rate_);
+    }
     if (bitrate_bps_ <= 0) {
         return 0;
     }
@@ -410,6 +419,10 @@ void MusicPlayer::WorkerTask() {
                     const int target_rate = Board::GetInstance().GetAudioCodec()->output_sample_rate();
                     // 采样率/声道数未知时，按输出格式处理（多数解码器首帧即给出信息）
                     const int effective_rate = target_rate > 0 ? target_rate : 24000;
+                    {
+                        std::lock_guard<std::mutex> lock(mutex_);
+                        position_rate_ = effective_rate;
+                    }
 
                     auto close_resampler = [&]() {
                         if (resampler != nullptr) {
@@ -530,6 +543,10 @@ void MusicPlayer::WorkerTask() {
                             }
                             if (!audio_service_.PushPcmToPlaybackQueue(std::move(frame), true)) {
                                 return;
+                            }
+                            {
+                                std::lock_guard<std::mutex> lock(mutex_);
+                                played_samples_ += static_cast<int64_t>(chunk);
                             }
                             offset += chunk;
                         }

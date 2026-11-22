@@ -76,6 +76,8 @@ private:
     // 进度跟踪（字节与码率）。
     int64_t total_bytes_ = 0;   // 文件总字节（来自 Content-Range/Length），未知为 0
     int64_t current_byte_ = 0;  // 已消费的绝对字节偏移
+    int64_t played_samples_ = 0;    // 已真正交给播放队列的采样数（不是网络预读）
+    int position_rate_ = 0;         // played_samples_ 对应的采样率
     int bitrate_bps_ = 0;       // 解码器报告的码率，未知为 0
     // 待执行的跳转目标字节；<0 表示无。
     int64_t seek_target_byte_ = -1;
