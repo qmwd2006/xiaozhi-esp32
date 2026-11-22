@@ -77,6 +77,7 @@ static std::string BuildDeviceStatusJson(Board& board) {
         cJSON_AddBoolToObject(music, "paused", app.IsMusicPaused());
         cJSON_AddNumberToObject(music, "position", app.MusicPositionSeconds());
         cJSON_AddNumberToObject(music, "duration", app.MusicDurationSeconds());
+        cJSON_AddStringToObject(music, "position_unit", "s");
         cJSON_AddNumberToObject(music, "queue_length", app.MusicQueueLength());
         cJSON_AddStringToObject(music, "repeat", mode);
     }
@@ -339,6 +340,7 @@ void McpServer::AddCommonTools() {
                 cJSON_AddBoolToObject(json, "paused", app.IsMusicPaused());
                 cJSON_AddNumberToObject(json, "position", app.MusicPositionSeconds());
                 cJSON_AddNumberToObject(json, "duration", app.MusicDurationSeconds());
+                cJSON_AddStringToObject(json, "position_unit", "s");
                 cJSON_AddNumberToObject(json, "queue_length", app.MusicQueueLength());
                 cJSON_AddStringToObject(
                     json, "repeat",

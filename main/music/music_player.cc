@@ -562,11 +562,18 @@ void MusicPlayer::WorkerTask() {
                                             ESP_AUDIO_ERR_OK) {
                                             src_rate = static_cast<int>(info.sample_rate);
                                             src_channels = info.channel;
-                                            ESP_LOGI(TAG, "MP3 stream: %d Hz, %d ch, %d bps",
-                                                     src_rate, src_channels,
-                                                     static_cast<int>(info.bitrate));
+                                            // esp_audio_simple_dec_get_info() 的 bitrate 单位是 kbps，
+                                            // 直接当 bps 用会小 1000 倍：position/duration 变毫秒、
+                                            // Seek 算出 1/1000 的偏移（跳到 13 s 而不是 269 s）。
+                                            const int bitrate_kbps = static_cast<int>(info.bitrate);
+                                            const int bitrate_bps =
+                                                bitrate_kbps > 0 && bitrate_kbps < 1000
+                                                    ? bitrate_kbps * 1000
+                                                    : bitrate_kbps;
+                                            ESP_LOGI(TAG, "MP3 stream: %d Hz, %d ch, %d kbps",
+                                                     src_rate, src_channels, bitrate_kbps);
                                             std::lock_guard<std::mutex> lock(mutex_);
-                                            bitrate_bps_ = static_cast<int>(info.bitrate);
+                                            bitrate_bps_ = bitrate_bps;
                                         }
                                     }
                                     emit_pcm(pcm_buf.data(), out.decoded_size);
