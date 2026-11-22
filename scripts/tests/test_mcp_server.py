@@ -83,7 +83,6 @@ class McpServerTest(unittest.TestCase):
                     bool IsMusicBusy() const { return false; }
                     bool IsMusicPlaying() const { return false; }
                     bool IsMusicPaused() const { return false; }
-                    const char* GetDeviceStateName() const { return "idle"; }
                     AudioService& GetAudioService() { return audio_; }
                     AudioService audio_;
                     int MusicPositionSeconds() const { return 0; }
