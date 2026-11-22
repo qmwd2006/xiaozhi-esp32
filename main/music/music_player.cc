@@ -494,21 +494,21 @@ void MusicPlayer::WorkerTask() {
                         // 输出采样率」做尽力而为的续播（误差在一个解码块内）。
                         {
                             std::lock_guard<std::mutex> lock(mutex_);
-                            int seek_seconds = -1;
+                            int skip_seek_seconds = -1;
                             if (pending_seek_seconds_ >= 0) {
-                                seek_seconds = pending_seek_seconds_;
+                                // 没有字节跳转可用（拿不到码率/不支持 Range）：靠丢弃采样对齐
+                                skip_seek_seconds = pending_seek_seconds_;
                                 pending_seek_seconds_ = -1;
                             } else if (seek_pending_ && bitrate_bps_ > 0) {
-                                seek_seconds =
-                                    static_cast<int>(seek_target_byte_ * 8LL / bitrate_bps_);
+                                // 已经用 Range 重新打开到目标字节了，不能再丢一遍采样，
+                                // 否则会跳过目标位置之后的内容（实测跳完直接播完/停住）
                                 seek_pending_ = false;
                                 seek_target_byte_ = -1;
                             }
-                            if (seek_seconds > 0) {
+                            if (skip_seek_seconds > 0) {
                                 const int rate = effective_rate > 0 ? effective_rate : 24000;
-                                // 累加而非覆盖：允许一次 seek 跨多个解码块。
                                 skip_remaining_samples_ +=
-                                    static_cast<int64_t>(seek_seconds) * rate;
+                                    static_cast<int64_t>(skip_seek_seconds) * rate;
                             }
                         }
                         if (skip_remaining_samples_ > 0) {
