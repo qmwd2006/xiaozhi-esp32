@@ -196,7 +196,7 @@ class McpServerTest(unittest.TestCase):
             raise unittest.SkipTest("requires C++23, cJSON and mbedTLS development headers: "
                                     + probe.stderr)
         cls.executable = build / "mcp_test"
-        subprocess.run(
+        result = subprocess.run(
             compiler + ["-std=c++23", "-fno-exceptions", *cjson_flags,
                         f"-I{build}", f"-I{ROOT / 'main'}",
                         f"-I{ROOT / 'main/boards/common'}",
@@ -204,8 +204,10 @@ class McpServerTest(unittest.TestCase):
                         str(ROOT / "main/mcp_server.cc"),
                         str(ROOT / "main/boards/common/press_to_talk_mcp_tool.cc"),
                         *libs, "-o", str(cls.executable)],
-            check=True, capture_output=True, text=True,
+            capture_output=True, text=True,
         )
+        if result.returncode:
+            raise RuntimeError("mcp_server.cc 编译失败:\n" + (result.stderr or "")[:4000])
 
     def responses(self, requests, custom_sender=True):
         process = subprocess.run(
