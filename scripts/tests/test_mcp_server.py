@@ -76,6 +76,7 @@ class McpServerTest(unittest.TestCase):
                     bool EnqueueMusic(std::string, std::string = "") { return true; }
                     bool SetMusicQueue(const std::string&, const std::string& = "") { return true; }
                     void ClearMusicQueue() {}
+                    void EnterStandby() {}
                     std::string GetCurrentMusicUrl() const { return {}; }
                     std::string GetCurrentMusicTitle() const { return {}; }
                     const char* GetDeviceStateName() const { return "idle"; }
