@@ -6,6 +6,8 @@
 #include "mcp_server.h"
 #include <esp_app_desc.h>
 #include <esp_log.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 #include <esp_pthread.h>
 #include <algorithm>
 #include <cstring>
@@ -25,6 +27,69 @@ McpServer::McpServer() {}
 
 McpServer::~McpServer() = default;
 
+
+// 在板级状态基础上补充运行时可观测项：
+//   runtime.wake_word_enabled / can_wake —— 现在能不能被唤醒（本轮要的字段）
+//   runtime.state / uptime_s / heap_*    —— 设备状态、运行时长、内存
+//   music.*                              —— 播放/暂停/位置/队列/循环
+static std::string BuildDeviceStatusJson(Board& board) {
+    std::string base = board.GetDeviceStatusJson();
+    cJSON* root = cJSON_Parse(base.c_str());
+    if (root == nullptr) {
+        return base;
+    }
+    auto& app = Application::GetInstance();
+    auto& audio = app.GetAudioService();
+
+    cJSON* runtime = cJSON_CreateObject();
+    if (runtime != nullptr) {
+        cJSON_AddItemToObject(root, "runtime", runtime);
+        const bool wake = audio.IsWakeWordRunning();
+        cJSON_AddStringToObject(runtime, "state", app.GetDeviceStateName());
+        cJSON_AddBoolToObject(runtime, "wake_word_enabled", wake);
+        cJSON_AddBoolToObject(runtime, "can_wake", wake);
+        cJSON_AddStringToObject(runtime, "wake_word_engine",
+                                audio.IsAfeWakeWord() ? "afe" : "lite");
+        cJSON_AddBoolToObject(runtime, "audio_processor_running",
+                              audio.IsAudioProcessorRunning());
+        cJSON_AddNumberToObject(runtime, "uptime_s",
+                                static_cast<double>(esp_timer_get_time()) / 1000000.0);
+        cJSON_AddNumberToObject(runtime, "heap_free", esp_get_free_heap_size());
+        cJSON_AddNumberToObject(runtime, "heap_min_free",
+                                esp_get_minimum_free_heap_size());
+    }
+
+    cJSON* music = cJSON_CreateObject();
+    if (music != nullptr) {
+        cJSON_AddItemToObject(root, "music", music);
+        const char* mode = "list";
+        switch (app.GetMusicRepeatMode()) {
+            case Application::MusicRepeatMode::kOff:
+                mode = "off";
+                break;
+            case Application::MusicRepeatMode::kOne:
+                mode = "one";
+                break;
+            default:
+                break;
+        }
+        cJSON_AddBoolToObject(music, "playing", app.IsMusicPlaying());
+        cJSON_AddBoolToObject(music, "paused", app.IsMusicPaused());
+        cJSON_AddNumberToObject(music, "position", app.MusicPositionSeconds());
+        cJSON_AddNumberToObject(music, "duration", app.MusicDurationSeconds());
+        cJSON_AddNumberToObject(music, "queue_length", app.MusicQueueLength());
+        cJSON_AddStringToObject(music, "repeat", mode);
+    }
+
+    char* text = cJSON_PrintUnformatted(root);
+    std::string out = text != nullptr ? text : base;
+    if (text != nullptr) {
+        cJSON_free(text);
+    }
+    cJSON_Delete(root);
+    return out;
+}
+
 void McpServer::AddCommonTools() {
     // *Important* To speed up the response time, we add the common tools to the beginning of
     // the tools list to utilize the prompt cache.
@@ -39,14 +104,16 @@ void McpServer::AddCommonTools() {
 
     AddTool("self.get_device_status",
             "Provides the real-time information of the device, including the current status of the "
-            "audio speaker, screen, battery, network, etc.\n"
+            "audio speaker, screen, battery, network, and runtime state: whether the wake word "
+            "is currently active (runtime.can_wake / runtime.wake_word_enabled), device state, "
+            "uptime, free heap, and music playback (playing/paused/position/queue/repeat).\n"
             "Use this tool for: \n"
             "1. Answering questions about current condition (e.g. what is the current volume of "
             "the audio speaker?)\n"
             "2. As the first step to control the device (e.g. turn up / down the volume of the "
             "audio speaker, etc.)",
             PropertyList(), [&board](const PropertyList& properties) -> ReturnValue {
-                return board.GetDeviceStatusJson();
+                return BuildDeviceStatusJson(board);
             });
 
     AddTool("self.audio_speaker.set_volume",
