@@ -48,6 +48,11 @@ public:
     int PositionSeconds() const;
     int DurationSeconds() const;
 
+    // ID3v2 标签里的标题/歌手（文件没标签时为空）。设备自报状态用它，
+    // 因为播放接口传进来的 title 只是调用方给的字符串，可能是错的。
+    std::string TagTitle() const;
+    std::string TagArtist() const;
+
     // 供 AudioService 的 on_playback_drained 回调转发：播放队列排空后判定是否结束。
     void OnPlaybackDrained();
 
@@ -57,6 +62,12 @@ private:
     std::condition_variable pause_cv_;
 
     std::string audio_url_;
+    std::string id3_title_;
+    std::string id3_artist_;
+    bool id3_parsed_ = false;
+
+    // 从 MP3 开头的 ID3v2 标签里取 TIT2/TPE1（尽力而为，失败就当没有）
+    void ParseId3(const uint8_t* data, size_t len);
     FinishedCallback finished_callback_;
     TaskHandle_t task_handle_ = nullptr;
     uint32_t playback_id_ = 0;

@@ -156,8 +156,10 @@ public:
     void EnterStandby();
     // 当前播放曲目 URL（可能为空）。
     std::string GetCurrentMusicUrl() const { return current_music_url_; }
-    // 当前播放曲目标题（可能为空）。
-    std::string GetCurrentMusicTitle() const { return current_music_title_; }
+    // 当前播放曲目标题：优先用 MP3 的 ID3 标签，取不到才用下发时给的字符串。
+    std::string GetCurrentMusicTitle() const;
+    // 当前播放曲目歌手（ID3 里读到才有，否则空）。
+    std::string GetCurrentMusicArtist() const { return music_player_.TagArtist(); }
     // 快进/快退（秒，可为负）。
     bool SkipMusic(int delta_seconds);
     bool IsMusicPlaying() const;

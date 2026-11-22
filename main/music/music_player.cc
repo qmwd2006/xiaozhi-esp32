@@ -150,6 +150,118 @@ void EnsureMp3DecoderRegistered() {
 }
 }  // namespace
 
+
+namespace {
+
+// ID3v2 的文本帧编码：0=ISO-8859-1, 1=UTF-16(带 BOM), 2=UTF-16BE, 3=UTF-8
+std::string Id3TextToUtf8(const uint8_t* data, size_t len) {
+    if (len == 0) {
+        return std::string();
+    }
+    uint8_t enc = data[0];
+    const uint8_t* p = data + 1;
+    size_t n = len - 1;
+    std::string out;
+    if (enc == 0 || enc == 3) {              // latin1 / utf8
+        out.assign(reinterpret_cast<const char*>(p),
+                   strnlen(reinterpret_cast<const char*>(p), n));
+        return out;
+    }
+    // UTF-16：跳过 BOM，按小端/大端解码
+    bool big_endian = (enc == 2);
+    if (n >= 2 && p[0] == 0xFF && p[1] == 0xFE) {
+        big_endian = false;
+        p += 2; n -= 2;
+    } else if (n >= 2 && p[0] == 0xFE && p[1] == 0xFF) {
+        big_endian = true;
+        p += 2; n -= 2;
+    }
+    for (size_t i = 0; i + 1 < n; i += 2) {
+        uint32_t ch = big_endian ? (uint32_t(p[i]) << 8 | p[i + 1])
+                                 : (uint32_t(p[i + 1]) << 8 | p[i]);
+        if (ch == 0) {
+            break;
+        }
+        if (ch < 0x80) {
+            out.push_back(static_cast<char>(ch));
+        } else if (ch < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (ch >> 6)));
+            out.push_back(static_cast<char>(0x80 | (ch & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xE0 | (ch >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((ch >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (ch & 0x3F)));
+        }
+    }
+    return out;
+}
+
+std::string TrimTrailingSpace(std::string s) {
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\r' || s.back() == '\n')) {
+        s.pop_back();
+    }
+    return s;
+}
+
+}  // namespace
+
+void MusicPlayer::ParseId3(const uint8_t* data, size_t len) {
+    std::string title, artist;
+    if (len >= 10 && data[0] == 'I' && data[1] == 'D' && data[2] == '3') {
+        const uint8_t major = data[3];
+        const uint32_t tag_size = (static_cast<uint32_t>(data[6] & 0x7F) << 21) |
+                                  (static_cast<uint32_t>(data[7] & 0x7F) << 14) |
+                                  (static_cast<uint32_t>(data[8] & 0x7F) << 7) |
+                                  (static_cast<uint32_t>(data[9] & 0x7F));
+        size_t pos = 10;
+        const size_t end = std::min(len, static_cast<size_t>(10) + tag_size);
+        while (pos + 10 <= end) {
+            const uint8_t* f = data + pos;
+            if (f[0] == 0) {                     // 填充区，结束
+                break;
+            }
+            const uint32_t fsize = (major >= 4)
+                ? ((static_cast<uint32_t>(f[4] & 0x7F) << 21) |
+                   (static_cast<uint32_t>(f[5] & 0x7F) << 14) |
+                   (static_cast<uint32_t>(f[6] & 0x7F) << 7) |
+                   (static_cast<uint32_t>(f[7] & 0x7F)))
+                : ((static_cast<uint32_t>(f[4]) << 24) |
+                   (static_cast<uint32_t>(f[5]) << 16) |
+                   (static_cast<uint32_t>(f[6]) << 8) | f[7]);
+            if (fsize == 0 || pos + 10 + fsize > len) {
+                break;
+            }
+            const bool is_title = (f[0] == 'T' && f[1] == 'I' && f[2] == 'T' && f[3] == '2');
+            const bool is_artist = (f[0] == 'T' && f[1] == 'P' && f[2] == 'E' && f[3] == '1');
+            if (is_title || is_artist) {
+                std::string v = TrimTrailingSpace(Id3TextToUtf8(f + 10, fsize));
+                if (is_title && title.empty()) {
+                    title = v;
+                } else if (is_artist && artist.empty()) {
+                    artist = v;
+                }
+            }
+            pos += 10 + fsize;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        id3_title_ = title;
+        id3_artist_ = artist;
+        id3_parsed_ = true;
+    }
+}
+
+std::string MusicPlayer::TagTitle() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return id3_title_;
+}
+
+std::string MusicPlayer::TagArtist() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return id3_artist_;
+}
+
 MusicPlayer::MusicPlayer(AudioService& audio_service) : audio_service_(audio_service) {}
 
 MusicPlayer::~MusicPlayer() { Stop(); }
@@ -177,6 +289,9 @@ bool MusicPlayer::Start(std::string audio_url, uint32_t playback_id,
         current_byte_ = 0;
         played_samples_ = 0;
         position_rate_ = 0;
+        id3_parsed_ = false;
+        id3_title_.clear();
+        id3_artist_.clear();
         bitrate_bps_ = 0;
         seek_target_byte_ = -1;
         seek_pending_ = false;
@@ -636,6 +751,14 @@ void MusicPlayer::WorkerTask() {
                             break;
                         }
                         {
+                            bool need_id3 = false;
+                            {
+                                std::lock_guard<std::mutex> lock(mutex_);
+                                need_id3 = !id3_parsed_;
+                            }
+                            if (need_id3) {
+                                ParseId3(http_buf.data(), *size);
+                            }
                             std::lock_guard<std::mutex> lock(mutex_);
                             current_byte_ += *size;
                         }

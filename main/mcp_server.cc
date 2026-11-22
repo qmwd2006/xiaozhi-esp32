@@ -349,6 +349,7 @@ void McpServer::AddCommonTools() {
                                                                                      : "off");
                 cJSON_AddStringToObject(json, "current_url", app.GetCurrentMusicUrl().c_str());
                 cJSON_AddStringToObject(json, "title", app.GetCurrentMusicTitle().c_str());
+                cJSON_AddStringToObject(json, "artist", app.GetCurrentMusicArtist().c_str());
                 cJSON_AddStringToObject(json, "device_state", app.GetDeviceStateName());
                 cJSON_AddBoolToObject(json, "pending", app.HasPendingMusic());
                 cJSON_AddBoolToObject(json, "busy", app.IsMusicBusy());

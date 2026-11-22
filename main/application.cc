@@ -2119,6 +2119,15 @@ int Application::MusicDurationSeconds() const { return music_player_.DurationSec
 
 bool Application::IsMusicPlaying() const { return music_player_.IsActive(); }
 
+std::string Application::GetCurrentMusicTitle() const {
+    // 文件自带的 ID3 标签优先：下发时传的 title 只是调用方的说法，可能和文件内容不符
+    std::string tag = music_player_.TagTitle();
+    if (!tag.empty()) {
+        return tag;
+    }
+    return current_music_title_;
+}
+
 void Application::Schedule(std::function<void()>&& callback) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
