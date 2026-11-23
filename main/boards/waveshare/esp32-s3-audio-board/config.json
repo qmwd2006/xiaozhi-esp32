@@ -9,7 +9,7 @@
                 "aec_mode": "device"
             },
             "sdkconfig_append": [
-                "CONFIG_OTA_URL=\"http://192.168.31.178:8066/xiaozhi/ota/\"",
+                "CONFIG_OTA_URL=\"http://192.168.31.236:8080/xiaozhi/ota/\"",
                 "CONFIG_USE_WECHAT_MESSAGE_STYLE=y",
                 "CONFIG_CAMERA_OV2640=y",
                 "CONFIG_CAMERA_OV2640_AUTO_DETECT_DVP_INTERFACE_SENSOR=y",
