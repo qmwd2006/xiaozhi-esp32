@@ -21,6 +21,7 @@
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
 #include "music/music_player.h"
+#include "ctl_channel.h"
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -258,6 +259,7 @@ private:
     std::string finished_music_url_;
     std::unique_ptr<Ota> ota_;
     std::unique_ptr<class MqttControl> mqtt_control_;
+    std::unique_ptr<CtlChannel> ctl_channel_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
 

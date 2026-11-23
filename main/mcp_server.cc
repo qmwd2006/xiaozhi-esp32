@@ -645,6 +645,16 @@ void McpServer::AddUserOnlyTool(const std::string& name, const std::string& desc
     AddTool(std::move(tool));
 }
 
+std::string McpServer::HandleExternalCall(const std::string& tool, const std::string& args_json,
+                                          int id) {
+    std::string captured;
+    std::string msg = "{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(id) +
+                      ",\"method\":\"tools/call\",\"params\":{\"name\":\"" + tool +
+                      "\",\"arguments\":" + (args_json.empty() ? "{}" : args_json) + "}}";
+    ParseMessage(msg, [&captured](const std::string& payload) { captured = payload; });
+    return captured;
+}
+
 void McpServer::ParseMessage(const std::string& message, ResponseSender response_sender) {
     CJsonUniquePtr json(cJSON_Parse(message.c_str()));
     if (json == nullptr) {

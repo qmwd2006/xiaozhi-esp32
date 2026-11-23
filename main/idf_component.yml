@@ -174,3 +174,5 @@ dependencies:
   m5stack/m5pm1: ^1.0.7
 
   cube32esp/xpowerslib: ^0.3.3
+
+  espressif/esp_websocket_client: ^1.2.3

@@ -235,6 +235,32 @@ NetworkResult<> Ota::CheckVersion() {
         ESP_LOGI(TAG, "mqtt_control section found");
     }
 
+    // 可选 "ctl_ws" 段：独立控制 WebSocket（新的控制面，和 mqtt_control 二选一）。
+    // 同一个 Settings 命名空间（mqttctl），键：endpoint/token/enabled。
+    has_ctl_config_ = false;
+    cJSON *ctl_ws = cJSON_GetObjectItem(root, "ctl_ws");
+    if (cJSON_IsObject(ctl_ws)) {
+        Settings settings("mqttctl", true);
+        cJSON *item = NULL;
+        cJSON_ArrayForEach(item, ctl_ws) {
+            if (cJSON_IsString(item)) {
+                if (settings.GetString(item->string) != item->valuestring) {
+                    settings.SetString(item->string, item->valuestring);
+                }
+            } else if (cJSON_IsNumber(item)) {
+                if (settings.GetInt(item->string) != item->valueint) {
+                    settings.SetInt(item->string, item->valueint);
+                }
+            } else if (cJSON_IsBool(item)) {
+                if (settings.GetBool(item->string) != cJSON_IsTrue(item)) {
+                    settings.SetBool(item->string, cJSON_IsTrue(item));
+                }
+            }
+        }
+        has_ctl_config_ = true;
+        ESP_LOGI(TAG, "ctl_ws section found");
+    }
+
     has_server_time_ = false;
     cJSON *server_time = cJSON_GetObjectItem(root, "server_time");
     if (cJSON_IsObject(server_time)) {
