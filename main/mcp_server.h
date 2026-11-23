@@ -444,6 +444,9 @@ public:
     void ParseMessage(const std::string& message, ResponseSender response_sender = nullptr);
     // 供独立控制通道使用：按工具名 + 参数 JSON 直接执行，返回该次调用的 JSON-RPC 回执文本
     std::string HandleExternalCall(const std::string& tool, const std::string& args_json, int id);
+    // 异步版本：工具执行会投递到主任务，回执通过 sender 回传（ctl 通道用这个）
+    void HandleExternalCallAsync(const std::string& tool, const std::string& args_json, int id,
+                                 ResponseSender sender);
 
 private:
     McpServer();

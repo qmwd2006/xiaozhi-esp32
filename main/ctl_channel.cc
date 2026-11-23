@@ -138,20 +138,23 @@ void CtlChannel::OnText(const char* data, int len) {
                 }
             }
             ESP_LOGI(TAG, "<< call#%d %s", id_num, tool->valuestring);
-            std::string result = McpServer::GetInstance().HandleExternalCall(
-                tool->valuestring, args_json, id_num);
-
-            cJSON* reply = cJSON_CreateObject();
-            cJSON_AddStringToObject(reply, "type", "result");
-            cJSON_AddNumberToObject(reply, "id", id_num);
-            cJSON_AddBoolToObject(reply, "ok", true);
-            cJSON_AddStringToObject(reply, "data", result.c_str());
-            char* out = cJSON_PrintUnformatted(reply);
-            if (out != nullptr) {
-                SendText(out);
-                cJSON_free(out);
-            }
-            cJSON_Delete(reply);
+            // 工具调用会被投递到主任务异步执行，回执稍后才产生，
+            // 所以这里不能同步取返回值，必须把回执通过 sender 回传。
+            McpServer::GetInstance().HandleExternalCallAsync(
+                tool->valuestring, args_json, id_num,
+                [this, id_num](const std::string& payload) {
+                    cJSON* reply = cJSON_CreateObject();
+                    cJSON_AddStringToObject(reply, "type", "result");
+                    cJSON_AddNumberToObject(reply, "id", id_num);
+                    cJSON_AddBoolToObject(reply, "ok", true);
+                    cJSON_AddStringToObject(reply, "data", payload.c_str());
+                    char* out = cJSON_PrintUnformatted(reply);
+                    if (out != nullptr) {
+                        SendText(out);
+                        cJSON_free(out);
+                    }
+                    cJSON_Delete(reply);
+                });
         }
     } else if (cJSON_IsString(type) && strcmp(type->valuestring, "ping") == 0) {
         SendText("{\"type\":\"pong\"}");
