@@ -304,11 +304,11 @@ void McpServer::AddCommonTools() {
             "  `value`: value for `set`\n"
             "  `type`: `str` (default) | `int` | `bool`\n"
             "Writes take effect after a reboot (call `self.device.reboot` afterwards).",
-            PropertyList({Property("action", kPropertyTypeString, "get"),
-                          Property("namespace", kPropertyTypeString, "wifi"),
-                          Property("key", kPropertyTypeString, ""),
-                          Property("value", kPropertyTypeString, ""),
-                          Property("type", kPropertyTypeString, "str")}),
+            PropertyList({Property("action", kPropertyTypeString, std::string("get")),
+                          Property("namespace", kPropertyTypeString, std::string("wifi")),
+                          Property("key", kPropertyTypeString, std::string("")),
+                          Property("value", kPropertyTypeString, std::string("")),
+                          Property("type", kPropertyTypeString, std::string("str"))}),
             [](const PropertyList& properties) -> ReturnValue {
                 auto action = properties["action"].value<std::string>();
                 auto ns = properties["namespace"].value<std::string>();
