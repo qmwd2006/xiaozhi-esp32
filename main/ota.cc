@@ -54,12 +54,11 @@ Ota::~Ota() {
 }
 
 std::string Ota::GetCheckVersionUrl() {
-    Settings settings("wifi", false);
-    std::string url = settings.GetString("ota_url");
-    if (url.empty()) {
-        url = CONFIG_OTA_URL;
-    }
-    return url;
+    // 固定使用编译期地址，忽略 NVS 里的历史值。
+    // 原因：设备 NVS 里残留过 192.168.31.178:8066（ARM）等旧地址，
+    // 它的优先级高于编译期配置，会把设备永久锁在旧服务器上；
+    // 现在 OTA 统一由编译期 CONFIG_OTA_URL 指定，改服务器只改一处。
+    return CONFIG_OTA_URL;
 }
 
 std::unique_ptr<Http> Ota::SetupHttp() {
