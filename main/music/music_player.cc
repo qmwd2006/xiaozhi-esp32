@@ -279,6 +279,11 @@ bool MusicPlayer::Start(std::string audio_url, uint32_t playback_id,
         audio_url_ = std::move(audio_url);
         finished_callback_ = std::move(finished_callback);
         playback_id_ = playback_id;
+        // 同步清掉上一首的 ID3 结果：否则切歌后到新文件首个数据块之间，
+        // status 会把上一首的标题报出去（实测切到《桃花诺》时仍报《梅雨》）
+        id3_title_.clear();
+        id3_artist_.clear();
+        id3_parsed_ = false;
         active_ = true;
         cancelled_ = false;
         paused_ = false;
