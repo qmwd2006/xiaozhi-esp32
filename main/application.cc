@@ -2076,6 +2076,34 @@ bool Application::PlayMusicIndex(int index) {
     return true;
 }
 
+namespace {
+
+// 最小 JSON 字符串转义（队列标题可能带引号/反斜杠）
+std::string JsonEscape(const std::string& in) {
+    std::string out;
+    out.reserve(in.size() + 8);
+    for (char c : in) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
+                    out += buf;
+                } else {
+                    out += c;
+                }
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
 std::string Application::MusicQueueJson(int limit) const {
     if (limit <= 0) {
         limit = 20;
