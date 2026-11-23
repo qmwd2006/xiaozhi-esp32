@@ -929,15 +929,14 @@ void Application::InitializeProtocol() {
 
     protocol_->Start();
 
-    // 独立控制 WebSocket（ctl_ws 段）：优先于 MQTT，用于 idle 状态下的远程触达。
-    if (ota_ != nullptr && ota_->HasCtlConfig()) {
-        ctl_channel_ = std::make_unique<CtlChannel>();
-        if (!ctl_channel_->StartFromSettings()) {
-            ESP_LOGW(TAG, "ctl_ws start failed");
-            ctl_channel_.reset();
-        } else {
-            ESP_LOGI(TAG, "ctl_ws channel started");
-        }
+    // 独立控制 WebSocket（ctl_ws 段）：配置在 OTA 阶段写入 Settings，
+    // 这里不能依赖 ota_ 指针——激活完成后 ota_ 已被 reset，判断会永远为假。
+    // StartFromSettings 自己会检查 enabled/endpoint，未配置就直接返回 false。
+    ctl_channel_ = std::make_unique<CtlChannel>();
+    if (!ctl_channel_->StartFromSettings()) {
+        ctl_channel_.reset();
+    } else {
+        ESP_LOGI(TAG, "ctl_ws channel started");
     }
 
     // 旁路 MQTT 控制通道：仅在 OTA 下发可选 "mqtt_control" 段时启用，
