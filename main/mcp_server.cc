@@ -295,6 +295,83 @@ void McpServer::AddCommonTools() {
                 return true;
             });
 
+    AddTool("self.device.nvs",
+            "Read, write or erase a device NVS key (persistent config).\n"
+            "Args:\n"
+            "  `action`: `get` (default) | `set` | `erase`\n"
+            "  `namespace`: `wifi` | `websocket` | `mqttctl` (default `wifi`)\n"
+            "  `key`: key name, e.g. `ota_url`\n"
+            "  `value`: value for `set`\n"
+            "  `type`: `str` (default) | `int` | `bool`\n"
+            "Writes take effect after a reboot (call `self.device.reboot` afterwards).",
+            PropertyList({Property("action", kPropertyTypeString, "get"),
+                          Property("namespace", kPropertyTypeString, "wifi"),
+                          Property("key", kPropertyTypeString, ""),
+                          Property("value", kPropertyTypeString, ""),
+                          Property("type", kPropertyTypeString, "str")}),
+            [](const PropertyList& properties) -> ReturnValue {
+                auto action = properties["action"].value<std::string>();
+                auto ns = properties["namespace"].value<std::string>();
+                auto key = properties["key"].value<std::string>();
+                auto value = properties["value"].value<std::string>();
+                auto type = properties["type"].value<std::string>();
+                const bool ns_ok = ns == "wifi" || ns == "websocket" || ns == "mqttctl";
+                if (!ns_ok) {
+                    return std::string("{\"ok\":false,\"error\":\"namespace 只允许 wifi/websocket/mqttctl\"}");
+                }
+                if (key.empty()) {
+                    return std::string("{\"ok\":false,\"error\":\"key 不能为空\"}");
+                }
+                Settings settings(ns, true);
+                if (action == "get") {
+                    cJSON* out = cJSON_CreateObject();
+                    cJSON_AddBoolToObject(out, "ok", true);
+                    cJSON_AddStringToObject(out, "namespace", ns.c_str());
+                    cJSON_AddStringToObject(out, "key", key.c_str());
+                    cJSON_AddStringToObject(out, "value", settings.GetString(key).c_str());
+                    char* dumped = cJSON_PrintUnformatted(out);
+                    std::string res = dumped != nullptr ? dumped : "{}";
+                    if (dumped != nullptr) {
+                        cJSON_free(dumped);
+                    }
+                    cJSON_Delete(out);
+                    return res;
+                }
+                if (action == "erase") {
+                    settings.EraseKey(key);
+                    ESP_LOGI(TAG, "NVS erase %s/%s", ns.c_str(), key.c_str());
+                    return std::string("{\"ok\":true,\"namespace\":\"") + ns +
+                           "\",\"key\":\"" + key + "\",\"erased\":true}";
+                }
+                if (action == "set") {
+                    if (type == "int") {
+                        settings.SetInt(key, std::atoi(value.c_str()));
+                    } else if (type == "bool") {
+                        settings.SetBool(key, value == "1" || value == "true" || value == "yes");
+                    } else {
+                        settings.SetString(key, value);
+                    }
+                    ESP_LOGI(TAG, "NVS set %s/%s = %s (type=%s)", ns.c_str(), key.c_str(),
+                             value.c_str(), type.c_str());
+                    return std::string("{\"ok\":true,\"reboot_required\":true}");
+                }
+                return std::string("{\"ok\":false,\"error\":\"action 只允许 get/set/erase\"}");
+            });
+
+    AddTool("self.device.reboot",
+            "Reboot the device. Used to apply pending NVS/config changes.",
+            PropertyList(), [](const PropertyList& properties) -> ReturnValue {
+                ESP_LOGW(TAG, "reboot requested");
+                esp_timer_handle_t timer = nullptr;
+                esp_timer_create_args_t args = {};
+                args.callback = [](void*) { esp_restart(); };
+                args.name = "reboot";
+                if (esp_timer_create(&args, &timer) == ESP_OK) {
+                    esp_timer_start_once(timer, 800 * 1000);
+                }
+                return std::string("{\"ok\":true,\"rebooting\":true}");
+            });
+
     AddTool("self.music.pause",
             "Pause the current song, keeping the playback position.",
             PropertyList(), [](const PropertyList& properties) -> ReturnValue {
