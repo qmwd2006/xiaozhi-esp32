@@ -69,7 +69,49 @@ bool CtlChannel::StartFromSettings() {
     return true;
 }
 
+void CtlChannel::ScheduleReconnect() {
+    if (!started_ || connected_) {
+        return;
+    }
+    if (reconnect_timer_ == nullptr) {
+        esp_timer_create_args_t args = {};
+        args.callback = [](void* ctx) { static_cast<CtlChannel*>(ctx)->DoReconnect(); };
+        args.arg = this;
+        args.name = "ctl_reconnect";
+        if (esp_timer_create(&args, &reconnect_timer_) != ESP_OK) {
+            reconnect_timer_ = nullptr;
+            return;
+        }
+    }
+    if (esp_timer_is_active(reconnect_timer_)) {
+        return;
+    }
+    // 5s 起，最多退到 60s，避免断网时疯狂重试
+    int delay_s = 5 << (reconnect_attempts_ > 3 ? 3 : reconnect_attempts_);
+    if (delay_s > 60) {
+        delay_s = 60;
+    }
+    ++reconnect_attempts_;
+    esp_timer_start_once(reconnect_timer_, delay_s * 1000000ULL);
+    ESP_LOGI(TAG, "断线，%d s 后重连（第 %d 次）", delay_s, reconnect_attempts_);
+}
+
+void CtlChannel::DoReconnect() {
+    if (!started_ || connected_ || client_ == nullptr) {
+        return;
+    }
+    // 客户端在服务端 close 之后可能停在停止态，先 stop 再 start 才能重新拨号
+    esp_websocket_client_stop(client_);
+    if (esp_websocket_client_start(client_) != ESP_OK) {
+        ESP_LOGW(TAG, "重连失败，继续等待");
+        ScheduleReconnect();
+    }
+}
+
 void CtlChannel::Stop() {
+    if (reconnect_timer_ != nullptr) {
+        esp_timer_stop(reconnect_timer_);
+    }
     if (client_ != nullptr) {
         esp_websocket_client_stop(client_);
         esp_websocket_client_destroy(client_);
@@ -88,11 +130,13 @@ void CtlChannel::OnEvent(int32_t id, void* data) {
     switch (id) {
         case WEBSOCKET_EVENT_CONNECTED:
             connected_ = true;
+            reconnect_attempts_ = 0;
             ESP_LOGI(TAG, "已连接");
             break;
         case WEBSOCKET_EVENT_DISCONNECTED:
             connected_ = false;
-            ESP_LOGW(TAG, "断开，等待自动重连");
+            ESP_LOGW(TAG, "断开，安排重连");
+            ScheduleReconnect();
             break;
         case WEBSOCKET_EVENT_DATA:
             if (ev->op_code == 0x1 || ev->op_code == 0x0) {   // 文本帧（含分片）
@@ -103,6 +147,7 @@ void CtlChannel::OnEvent(int32_t id, void* data) {
             break;
         case WEBSOCKET_EVENT_ERROR:
             ESP_LOGW(TAG, "错误");
+            ScheduleReconnect();
             break;
         default:
             break;

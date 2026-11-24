@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include "esp_timer.h"
 #include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -26,10 +27,14 @@ private:
     void OnEvent(int32_t id, void* data);
     void OnText(const char* data, int len);
     void SendText(const std::string& text);
+    void ScheduleReconnect();     // 断线后自己安排一次重连（不依赖客户端的自动重连）
+    void DoReconnect();
 
     std::string endpoint_;
     std::string token_;
     esp_websocket_client_handle_t client_ = nullptr;
     bool connected_ = false;
     bool started_ = false;
+    int reconnect_attempts_ = 0;
+    esp_timer_handle_t reconnect_timer_ = nullptr;
 };
