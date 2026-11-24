@@ -2253,6 +2253,10 @@ std::string Application::GetCurrentMusicTitle() const {
     if (!current_music_title_.empty()) {
         return current_music_title_;
     }
+    // 清空队列后 id3 标签还留在 player 里，这里必须挡住，否则仍然报上一首
+    if (current_music_url_.empty() && music_queue_.empty()) {
+        return "";
+    }
     return music_player_.TagTitle();
 }
 
@@ -2261,6 +2265,9 @@ std::string Application::GetCurrentMusicArtist() const {
     size_t dash = current_music_title_.rfind(" - ");
     if (dash != std::string::npos && dash + 3 < current_music_title_.size()) {
         return current_music_title_.substr(dash + 3);
+    }
+    if (current_music_url_.empty() && music_queue_.empty()) {
+        return "";
     }
     return music_player_.TagArtist();
 }
