@@ -2226,12 +2226,22 @@ int Application::MusicDurationSeconds() const { return music_player_.DurationSec
 bool Application::IsMusicPlaying() const { return music_player_.IsActive(); }
 
 std::string Application::GetCurrentMusicTitle() const {
-    // 文件自带的 ID3 标签优先：下发时传的 title 只是调用方的说法，可能和文件内容不符
-    std::string tag = music_player_.TagTitle();
-    if (!tag.empty()) {
-        return tag;
+    // 队列标题优先：它是服务端下发的、与曲库索引一致的规范名（含 Live/版本后缀）。
+    // ID3 只在队列标题缺失时兜底——库里有文件的标签与内容不符（实测《泪桥》标签写《晴天》），
+    // 之前 ID3 优先导致后台/语音报的歌名和实际播放的不是一首。
+    if (!current_music_title_.empty()) {
+        return current_music_title_;
     }
-    return current_music_title_;
+    return music_player_.TagTitle();
+}
+
+std::string Application::GetCurrentMusicArtist() const {
+    // 队列标题是 "歌名 - 歌手" 形式时从中取歌手；否则退回 ID3
+    size_t dash = current_music_title_.rfind(" - ");
+    if (dash != std::string::npos && dash + 3 < current_music_title_.size()) {
+        return current_music_title_.substr(dash + 3);
+    }
+    return music_player_.TagArtist();
 }
 
 void Application::Schedule(std::function<void()>&& callback) {

@@ -820,6 +820,15 @@ void MusicPlayer::WorkerTask() {
             completion_reported_ = false;
             total_bytes_ = 0;
             current_byte_ = 0;
+            // 换曲接管路径必须同样重置 ID3 与播放计时：
+            // 漏掉这三行时，status/屏幕会一直报上一首的歌名（实测连按下一首歌名不变），
+            // played_samples_ 不复位则新曲位置从上一首的秒数继续累加。
+            id3_title_.clear();
+            id3_artist_.clear();
+            id3_parsed_ = false;
+            played_samples_ = 0;
+            position_rate_ = 0;
+            skip_remaining_samples_ = 0;
             bitrate_bps_ = 0;
             seek_target_byte_ = -1;
             seek_pending_ = false;
