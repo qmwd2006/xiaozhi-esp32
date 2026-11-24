@@ -37,6 +37,7 @@ private:
     bool connected_ = false;
     bool started_ = false;
     int reconnect_attempts_ = 0;
+    int disconnect_ticks_ = 0;
     esp_timer_handle_t reconnect_timer_ = nullptr;
     esp_timer_handle_t watchdog_timer_ = nullptr;
 };

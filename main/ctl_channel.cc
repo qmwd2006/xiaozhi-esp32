@@ -105,14 +105,15 @@ void CtlChannel::DoReconnect() {
     if (!started_ || connected_) {
         return;
     }
-    // 只 stop/start 往往无效（客户端停在停止态），这里直接销毁重建
-    ESP_LOGI(TAG, "重建控制通道客户端");
-    Stop();
-    started_ = true;                 // Stop() 会清掉，这里恢复，表示"期望在线"
-    if (!StartFromSettings()) {
-        ESP_LOGW(TAG, "重建失败，稍后再试");
-        started_ = true;
-        ScheduleReconnect();
+    // 不要销毁/重建客户端：库内部任务正在跑，destroy 会与之冲突（实测会把设备搞重启）。
+    // 保活已开启（ping_interval_sec），库自己会在 5 s 间隔内重连；
+    // 这里只在长时间未恢复时补一次 start()，失败也不再折腾。
+    if (client_ == nullptr) {
+        return;
+    }
+    ESP_LOGW(TAG, "控制通道仍未恢复，尝试重新启动客户端");
+    if (esp_websocket_client_start(client_) != ESP_OK) {
+        ESP_LOGW(TAG, "start 失败，等待库自动重连");
     }
 }
 
@@ -121,7 +122,12 @@ void CtlChannel::StartWatchdog() {
         esp_timer_create_args_t args = {};
         args.callback = [](void* ctx) {
             auto* self = static_cast<CtlChannel*>(ctx);
-            if (self->started_ && !self->connected_) {
+            if (!self->started_ || self->connected_) {
+                self->disconnect_ticks_ = 0;
+                return;
+            }
+            if (++self->disconnect_ticks_ >= 6) {      // 约 2 分钟仍未恢复
+                self->disconnect_ticks_ = 0;
                 self->ScheduleReconnect();
             }
         };
@@ -167,8 +173,7 @@ void CtlChannel::OnEvent(int32_t id, void* data) {
             break;
         case WEBSOCKET_EVENT_DISCONNECTED:
             connected_ = false;
-            ESP_LOGW(TAG, "断开，安排重连");
-            ScheduleReconnect();
+            ESP_LOGW(TAG, "断开（库将按 5 s 间隔自动重连）");
             break;
         case WEBSOCKET_EVENT_DATA:
             if (ev->op_code == 0x1 || ev->op_code == 0x0) {   // 文本帧（含分片）
@@ -179,7 +184,6 @@ void CtlChannel::OnEvent(int32_t id, void* data) {
             break;
         case WEBSOCKET_EVENT_ERROR:
             ESP_LOGW(TAG, "错误");
-            ScheduleReconnect();
             break;
         default:
             break;
