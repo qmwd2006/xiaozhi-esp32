@@ -65,6 +65,7 @@ bool CtlChannel::StartFromSettings() {
         return false;
     }
     started_ = true;
+    StartWatchdog();
     ESP_LOGI(TAG, "控制通道启动：%s（mac=%s）", endpoint_.c_str(), mac_str);
     return true;
 }
@@ -97,20 +98,44 @@ void CtlChannel::ScheduleReconnect() {
 }
 
 void CtlChannel::DoReconnect() {
-    if (!started_ || connected_ || client_ == nullptr) {
+    if (!started_ || connected_) {
         return;
     }
-    // 客户端在服务端 close 之后可能停在停止态，先 stop 再 start 才能重新拨号
-    esp_websocket_client_stop(client_);
-    if (esp_websocket_client_start(client_) != ESP_OK) {
-        ESP_LOGW(TAG, "重连失败，继续等待");
+    // 只 stop/start 往往无效（客户端停在停止态），这里直接销毁重建
+    ESP_LOGI(TAG, "重建控制通道客户端");
+    Stop();
+    started_ = true;                 // Stop() 会清掉，这里恢复，表示"期望在线"
+    if (!StartFromSettings()) {
+        ESP_LOGW(TAG, "重建失败，稍后再试");
+        started_ = true;
         ScheduleReconnect();
+    }
+}
+
+void CtlChannel::StartWatchdog() {
+    if (watchdog_timer_ != nullptr) {
+        return;
+    }
+    esp_timer_create_args_t args = {};
+    args.callback = [](void* ctx) {
+        auto* self = static_cast<CtlChannel*>(ctx);
+        if (self->started_ && !self->connected_) {
+            self->ScheduleReconnect();
+        }
+    };
+    args.arg = this;
+    args.name = "ctl_watchdog";
+    if (esp_timer_create(&args, &watchdog_timer_) == ESP_OK) {
+        esp_timer_start_periodic(watchdog_timer_, 20 * 1000000ULL);
     }
 }
 
 void CtlChannel::Stop() {
     if (reconnect_timer_ != nullptr) {
         esp_timer_stop(reconnect_timer_);
+    }
+    if (watchdog_timer_ != nullptr) {
+        esp_timer_stop(watchdog_timer_);
     }
     if (client_ != nullptr) {
         esp_websocket_client_stop(client_);

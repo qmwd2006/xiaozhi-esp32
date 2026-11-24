@@ -29,6 +29,7 @@ private:
     void SendText(const std::string& text);
     void ScheduleReconnect();     // 断线后自己安排一次重连（不依赖客户端的自动重连）
     void DoReconnect();
+    void StartWatchdog();         // 兜底：每 20 s 检查一次，没连上就重建
 
     std::string endpoint_;
     std::string token_;
@@ -37,4 +38,5 @@ private:
     bool started_ = false;
     int reconnect_attempts_ = 0;
     esp_timer_handle_t reconnect_timer_ = nullptr;
+    esp_timer_handle_t watchdog_timer_ = nullptr;
 };
