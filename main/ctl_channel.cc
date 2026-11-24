@@ -54,6 +54,8 @@ bool CtlChannel::StartFromSettings() {
     cfg.disable_pingpong_discon = false;
     cfg.network_timeout_ms = 8000;
     cfg.disable_auto_reconnect = false;
+    // 1.8.0 起：干净关闭（服务端发 close 帧）默认让客户端停下，必须显式开启才重连
+    cfg.enable_close_reconnect = true;
     cfg.buffer_size = 2048;
     cfg.task_stack = 6144;
 
@@ -174,6 +176,10 @@ void CtlChannel::OnEvent(int32_t id, void* data) {
             connected_ = true;
             reconnect_attempts_ = 0;
             ESP_LOGI(TAG, "已连接");
+            break;
+        case WEBSOCKET_EVENT_CLOSED:
+            connected_ = false;
+            ESP_LOGW(TAG, "对端干净关闭（enable_close_reconnect=true，库会自动重连）");
             break;
         case WEBSOCKET_EVENT_DISCONNECTED:
             connected_ = false;
