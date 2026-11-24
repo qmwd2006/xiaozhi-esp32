@@ -47,6 +47,10 @@ bool CtlChannel::StartFromSettings() {
     esp_websocket_client_config_t cfg = {};
     cfg.uri = uri.c_str();
     cfg.reconnect_timeout_ms = 5000;
+    // 设备侧 WS 保活：链路静默断开时只有客户端自己发 ping 才能察觉
+    cfg.ping_interval_sec = 25;
+    cfg.pingpong_timeout_sec = 10;
+    cfg.disable_pingpong_discon = false;
     cfg.network_timeout_ms = 8000;
     cfg.disable_auto_reconnect = false;
     cfg.buffer_size = 2048;
@@ -113,19 +117,22 @@ void CtlChannel::DoReconnect() {
 }
 
 void CtlChannel::StartWatchdog() {
-    if (watchdog_timer_ != nullptr) {
-        return;
-    }
-    esp_timer_create_args_t args = {};
-    args.callback = [](void* ctx) {
-        auto* self = static_cast<CtlChannel*>(ctx);
-        if (self->started_ && !self->connected_) {
-            self->ScheduleReconnect();
+    if (watchdog_timer_ == nullptr) {
+        esp_timer_create_args_t args = {};
+        args.callback = [](void* ctx) {
+            auto* self = static_cast<CtlChannel*>(ctx);
+            if (self->started_ && !self->connected_) {
+                self->ScheduleReconnect();
+            }
+        };
+        args.arg = this;
+        args.name = "ctl_watchdog";
+        if (esp_timer_create(&args, &watchdog_timer_) != ESP_OK) {
+            watchdog_timer_ = nullptr;
         }
-    };
-    args.arg = this;
-    args.name = "ctl_watchdog";
-    if (esp_timer_create(&args, &watchdog_timer_) == ESP_OK) {
+    }
+    if (watchdog_timer_ != nullptr) {
+        esp_timer_stop(watchdog_timer_);
         esp_timer_start_periodic(watchdog_timer_, 20 * 1000000ULL);
     }
 }
