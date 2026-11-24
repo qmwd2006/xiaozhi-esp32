@@ -1607,6 +1607,16 @@ void Application::ClearMusicQueue() {
         music_index_ = -1;
         music_history_.clear();
         music_repeat_mode_ = MusicRepeatMode::kList;
+        // 清空队列意味着「没有当前曲目」了：把 URL / 续播位置 / 待播也一起复位，
+        // 否则 status 还会报上一首的 url、进度、时长（后台看着像没清干净）。
+        current_music_url_.clear();
+        finished_music_url_.clear();
+        pending_music_url_.clear();
+        music_resume_url_.clear();
+        music_resume_position_ = 0;
+        music_user_stopped_ = false;
+        music_paused_by_dialog_ = false;
+        music_user_paused_ = false;
         ESP_LOGI(TAG, "Music queue cleared");
     });
 }
@@ -2219,9 +2229,20 @@ void Application::SetMusicRepeatMode(MusicRepeatMode mode) {
 
 bool Application::IsMusicPaused() const { return music_player_.IsPaused(); }
 
-int Application::MusicPositionSeconds() const { return music_player_.PositionSeconds(); }
+int Application::MusicPositionSeconds() const {
+    // 队列被清空且没有当前曲目 → 进零；继续保留真实的 stop（url 还在）用于显示续播位置。
+    if (music_queue_.empty() && current_music_url_.empty()) {
+        return 0;
+    }
+    return music_player_.PositionSeconds();
+}
 
-int Application::MusicDurationSeconds() const { return music_player_.DurationSeconds(); }
+int Application::MusicDurationSeconds() const {
+    if (music_queue_.empty() && current_music_url_.empty()) {
+        return 0;
+    }
+    return music_player_.DurationSeconds();
+}
 
 bool Application::IsMusicPlaying() const { return music_player_.IsActive(); }
 
