@@ -2138,8 +2138,10 @@ std::string Application::MusicQueueJson(int limit) const {
     for (int i = 0; i < n && i < limit; ++i) {
         if (i) out += ',';
         std::string title = i < static_cast<int>(music_titles_.size()) ? music_titles_[i] : "";
-        out += "{\"index\":" + std::to_string(i) + ",\"title\":" + JsonEscape(title) +
-               ",\"url\":" + JsonEscape(music_queue_[i]) + "}";
+        // JsonEscape 只做转义、不加引号，这里必须自己补（否则 items 不是合法 JSON，
+        // 服务端 json.loads 直接失败，追加队列只能退回逐首下发）
+        out += "{\"index\":" + std::to_string(i) + ",\"title\":\"" + JsonEscape(title) +
+               "\",\"url\":\"" + JsonEscape(music_queue_[i]) + "\"}";
     }
     out += "]}";
     return out;
