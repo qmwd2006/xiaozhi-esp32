@@ -8,6 +8,7 @@
 
 #include "mcp_server.h"
 #include "settings.h"
+#include "application.h"
 
 static const char* TAG = "CtlChannel";
 
@@ -105,16 +106,19 @@ void CtlChannel::DoReconnect() {
     if (!started_ || connected_) {
         return;
     }
-    // 不要销毁/重建客户端：库内部任务正在跑，destroy 会与之冲突（实测会把设备搞重启）。
-    // 保活已开启（ping_interval_sec），库自己会在 5 s 间隔内重连；
-    // 这里只在长时间未恢复时补一次 start()，失败也不再折腾。
-    if (client_ == nullptr) {
-        return;
-    }
-    ESP_LOGW(TAG, "控制通道仍未恢复，尝试重新启动客户端");
-    if (esp_websocket_client_start(client_) != ESP_OK) {
-        ESP_LOGW(TAG, "start 失败，等待库自动重连");
-    }
+    // 关键：销毁/重建必须在主任务执行，不能在 ws 事件回调里做（会与库内部任务抢锁→重启）。
+    Application::GetInstance().Schedule([this]() {
+        if (!started_ || connected_) {
+            return;
+        }
+        ESP_LOGW(TAG, "控制通道重建客户端");
+        Stop();
+        started_ = true;              // Stop() 会清掉，这里恢复期望态
+        if (!StartFromSettings()) {
+            ESP_LOGW(TAG, "重建失败，等待下次看门狗");
+            started_ = true;
+        }
+    });
 }
 
 void CtlChannel::StartWatchdog() {
@@ -126,7 +130,7 @@ void CtlChannel::StartWatchdog() {
                 self->disconnect_ticks_ = 0;
                 return;
             }
-            if (++self->disconnect_ticks_ >= 6) {      // 约 2 分钟仍未恢复
+            if (++self->disconnect_ticks_ >= 2) {      // 约 40 s 仍未恢复
                 self->disconnect_ticks_ = 0;
                 self->ScheduleReconnect();
             }
