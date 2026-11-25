@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'components/xz_core/**'
+      - 'xz_core/**'
       - '.github/workflows/build-xz-core.yml'
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
 
       - name: Native build + tests
         run: |
-          cmake -S components/xz_core -B build-native -DCMAKE_BUILD_TYPE=Release
+          cmake -S xz_core -B build-native -DCMAKE_BUILD_TYPE=Release
           cmake --build build-native -j"$(nproc)"
           ctest --test-dir build-native --output-on-failure
 
@@ -43,7 +43,7 @@ jobs:
 
       - name: Build wasm
         run: |
-          emcmake cmake -S components/xz_core -B build-wasm -DCMAKE_BUILD_TYPE=Release
+          emcmake cmake -S xz_core -B build-wasm -DCMAKE_BUILD_TYPE=Release
           cmake --build build-wasm -j"$(nproc)"
           ls -lh build-wasm/xz_core.js build-wasm/xz_core.wasm
 
