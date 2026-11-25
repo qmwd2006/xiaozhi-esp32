@@ -54,8 +54,10 @@ jobs:
           const factory = require('./build-wasm/xz_core.js');
           (async () => {
             const path = require('path');
+            // 直接把 wasm 字节喂给模块，绕开 node 下 fetch 相对 URL 的问题
+            const wasmBinary = fs.readFileSync(path.join(process.cwd(), 'build-wasm', 'xz_core.wasm'));
             const m = typeof factory === 'function'
-              ? await factory({ locateFile: f => path.join(process.cwd(), 'build-wasm', f) })
+              ? await factory({ wasmBinary, locateFile: f => path.join(process.cwd(), 'build-wasm', f) })
               : factory;
             const tools = JSON.parse(m.UTF8ToString(m._xz_tools_json()));
             console.log('wasm tools:', tools.length);
