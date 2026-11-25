@@ -1,0 +1,76 @@
+name: Build xz_core (native tests + wasm)
+
+# 本机没有 emscripten 也照样能出 core.wasm：在 CI 里装 emscripten（apt），
+# 原生测试、工具表快照、wasm 产物一次性产出。
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'components/xz_core/**'
+      - '.github/workflows/build-xz-core.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake g++ emscripten
+          emcc --version | head -2
+          cmake --version | head -1
+
+      - name: Native build + tests
+        run: |
+          cmake -S components/xz_core -B build-native -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-native -j"$(nproc)"
+          ctest --test-dir build-native --output-on-failure
+
+      - name: Dump tools.json (与固件同源的契约快照)
+        run: |
+          ./build-native/xz_dump_tools > tools.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('tools.json'))
+          print('tools:', len(d))
+          assert len(d) == 23, d
+          names = {t['name'] for t in d}
+          for need in ('self.music.set_queue', 'self.music.seek', 'self.audio_speaker.set_volume'):
+              assert need in names, need
+          PY
+
+      - name: Build wasm
+        run: |
+          emcmake cmake -S components/xz_core -B build-wasm -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-wasm -j"$(nproc)"
+          ls -lh build-wasm/xz_core.js build-wasm/xz_core.wasm
+
+      - name: Smoke test wasm under node
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const factory = require('./build-wasm/xz_core.js');
+          (async () => {
+            const m = typeof factory === 'function' ? await factory() : factory;
+            const tools = JSON.parse(m.UTF8ToString(m._xz_tools_json()));
+            console.log('wasm tools:', tools.length);
+            if (tools.length !== 23) throw new Error('tools count ' + tools.length);
+            const res = JSON.parse(m.UTF8ToString(m._xz_mcp_handle(JSON.stringify({
+              jsonrpc: '2.0', id: 1, method: 'tools/call',
+              params: { name: 'self.music.set_queue', arguments: { urls: 'a\nb', titles: 'A\nB' } },
+            }))));
+            const text = res.result.content[0].text;
+            if (!text.includes('"queue_length":2')) throw new Error('unexpected: ' + text);
+            console.log('set_queue ok:', text.slice(0, 60));
+          })().catch(e => { console.error(e); process.exit(1); });
+          JS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xz-core-wasm
+          path: |
+            build-wasm/xz_core.js
+            build-wasm/xz_core.wasm
+            tools.json
