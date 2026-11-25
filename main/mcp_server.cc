@@ -86,6 +86,26 @@ static std::string BuildDeviceStatusJson(Board& board) {
         cJSON_AddBoolToObject(runtime, "xz_core_ok", g_xz_ok);
     }
 
+    const esp_app_desc_t* desc = esp_app_get_description();
+    if (desc != nullptr) {
+        cJSON* app_obj = cJSON_CreateObject();
+        if (app_obj != nullptr) {
+            cJSON_AddItemToObject(root, "application", app_obj);
+            cJSON_AddStringToObject(app_obj, "version", desc->version);
+            cJSON_AddStringToObject(app_obj, "project", desc->project_name);
+            char elf[13] = {0};
+            memcpy(elf, desc->app_elf_sha256, 6);          // 12 位十六进制，和 OTA 比对同一段
+            char hex[13];
+            for (int i = 0; i < 6; ++i) snprintf(hex + i * 2, 3, "%02x", (unsigned char)elf[i]);
+            hex[12] = 0;
+            cJSON_AddStringToObject(app_obj, "elf", hex);
+            cJSON_AddStringToObject(app_obj, "idf", desc->idf_ver);
+            cJSON_AddStringToObject(app_obj, "board", BOARD_TYPE);
+            std::string built = std::string(desc->date) + " " + desc->time;
+            cJSON_AddStringToObject(app_obj, "built", built.c_str());
+        }
+    }
+
     cJSON* music = cJSON_CreateObject();
     if (music != nullptr) {
         cJSON_AddItemToObject(root, "music", music);
