@@ -13,21 +13,21 @@ std::string g_out;
 #ifdef __EMSCRIPTEN__
 // 这些由 sim.js 实现（浏览器 <audio> / localStorage / 页面亮度）
 EM_JS(void, js_music_play, (const char* url, const char* title), {
-    if (window.xzPlay) window.xzPlay(UTF8ToString(url), UTF8ToString(title));
+    if (globalThis.xzPlay) globalThis.xzPlay(UTF8ToString(url), UTF8ToString(title));
 });
-EM_JS(void, js_music_stop, (void), { if (window.xzStop) window.xzStop(); });
-EM_JS(void, js_music_pause, (void), { if (window.xzPause) window.xzPause(); });
-EM_JS(void, js_music_resume, (void), { if (window.xzResume) window.xzResume(); });
-EM_JS(void, js_music_seek, (int s), { if (window.xzSeek) window.xzSeek(s); });
-EM_JS(void, js_music_skip, (int d), { if (window.xzSkip) window.xzSkip(d); });
-EM_JS(int, js_music_position, (void), { return window.xzPosition ? window.xzPosition() : 0; });
-EM_JS(int, js_music_duration, (void), { return window.xzDuration ? window.xzDuration() : 0; });
-EM_JS(int, js_music_playing, (void), { return window.xzPlaying ? (window.xzPlaying() ? 1 : 0) : 0; });
-EM_JS(int, js_music_paused, (void), { return window.xzPaused ? (window.xzPaused() ? 1 : 0) : 0; });
-EM_JS(void, js_set_volume, (int v), { if (window.xzVolume) window.xzVolume(v); });
-EM_JS(void, js_set_brightness, (int v), { if (window.xzBrightness) window.xzBrightness(v); });
-EM_JS(void, js_standby, (void), { if (window.xzStandby) window.xzStandby(); });
-EM_JS(void, js_reboot, (void), { if (window.xzReboot) window.xzReboot(); });
+EM_JS(void, js_music_stop, (void), { if (globalThis.xzStop) globalThis.xzStop(); });
+EM_JS(void, js_music_pause, (void), { if (globalThis.xzPause) globalThis.xzPause(); });
+EM_JS(void, js_music_resume, (void), { if (globalThis.xzResume) globalThis.xzResume(); });
+EM_JS(void, js_music_seek, (int s), { if (globalThis.xzSeek) globalThis.xzSeek(s); });
+EM_JS(void, js_music_skip, (int d), { if (globalThis.xzSkip) globalThis.xzSkip(d); });
+EM_JS(int, js_music_position, (void), { return globalThis.xzPosition ? globalThis.xzPosition() : 0; });
+EM_JS(int, js_music_duration, (void), { return globalThis.xzDuration ? globalThis.xzDuration() : 0; });
+EM_JS(int, js_music_playing, (void), { return globalThis.xzPlaying ? (globalThis.xzPlaying() ? 1 : 0) : 0; });
+EM_JS(int, js_music_paused, (void), { return globalThis.xzPaused ? (globalThis.xzPaused() ? 1 : 0) : 0; });
+EM_JS(void, js_set_volume, (int v), { if (globalThis.xzVolume) globalThis.xzVolume(v); });
+EM_JS(void, js_set_brightness, (int v), { if (globalThis.xzBrightness) globalThis.xzBrightness(v); });
+EM_JS(void, js_standby, (void), { if (globalThis.xzStandby) globalThis.xzStandby(); });
+EM_JS(void, js_reboot, (void), { if (globalThis.xzReboot) globalThis.xzReboot(); });
 
 class WasmMusicPort : public xz::MusicPort {
  public:
