@@ -10,6 +10,7 @@
 #include <esp_timer.h>
 #include <esp_pthread.h>
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <optional>

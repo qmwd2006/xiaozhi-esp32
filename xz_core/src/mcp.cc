@@ -57,7 +57,6 @@ const ToolDef kTools[] = {
 
 constexpr int kToolCount = static_cast<int>(sizeof(kTools) / sizeof(kTools[0]));
 
-int ToolCount() { return kToolCount; }
 
 std::string NormalizeName(const std::string& name) {
     if (name.rfind("self_", 0) != 0) return name;
@@ -88,6 +87,8 @@ std::vector<std::string> SplitLines(const std::string& s) {
 }
 
 }  // namespace
+
+int ToolCount() { return kToolCount; }
 
 std::string ToolsJson() {
     std::string out = "[";
