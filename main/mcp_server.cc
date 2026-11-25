@@ -20,10 +20,39 @@
 #include "lvgl_image.h"
 #include "lvgl_theme.h"
 #include "settings.h"
+#include "xz/mcp.h"
+#include "xz/music_queue.h"
 
 #define TAG "MCP"
 
-McpServer::McpServer() {}
+namespace {
+bool g_xz_ok = false;
+int g_xz_tools = 0;
+}  // namespace
+
+McpServer::McpServer() {
+    // W2-b 第一步：固件里跑与模拟器同源的 xz_core（只做自检，暂不改工具行为）
+    const std::string tools = xz::ToolsJson();
+    int n = 0;
+    for (char c : tools) {
+        if (c == '{') ++n;
+    }
+    xz::ToolsJson();                      // 幂等调用，确认可重入
+    xz::MusicQueue q;
+    q.Set({"a", "b"}, {"A", "B"}, 0);
+    const bool next_ok = q.Next();
+    const std::string snap = q.Snapshot(5);
+    xz::Deps deps;
+    deps.queue = &q;
+    const std::string init = xz::HandleMcp(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}", deps);
+    g_xz_tools = n;
+    g_xz_ok = next_ok && snap.find("\"length\":2") != std::string::npos &&
+              snap.find("\"current_index\":1") != std::string::npos &&
+              init.find("protocolVersion") != std::string::npos;
+    ESP_LOGI(TAG, "xz_core 自检：tools=%d next=%d snapshot=%s ok=%d", n, next_ok ? 1 : 0,
+             snap.c_str(), g_xz_ok ? 1 : 0);
+}
 
 McpServer::~McpServer() = default;
 
@@ -57,6 +86,8 @@ static std::string BuildDeviceStatusJson(Board& board) {
         cJSON_AddNumberToObject(runtime, "heap_free", esp_get_free_heap_size());
         cJSON_AddNumberToObject(runtime, "heap_min_free",
                                 esp_get_minimum_free_heap_size());
+        cJSON_AddNumberToObject(runtime, "xz_core_tools", g_xz_tools);
+        cJSON_AddBoolToObject(runtime, "xz_core_ok", g_xz_ok);
     }
 
     cJSON* music = cJSON_CreateObject();

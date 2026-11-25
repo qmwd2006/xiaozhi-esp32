@@ -1,4 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
+
+# 在 ESP-IDF 里被当作组件编译（EXTRA_COMPONENT_DIRS 指过来）
+if(COMMAND idf_component_register)
+  idf_component_register(SRCS src/json_util.cc src/music_queue.cc src/mcp.cc
+                         INCLUDE_DIRS include)
+  return()
+endif()
+
 project(xz_core CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
