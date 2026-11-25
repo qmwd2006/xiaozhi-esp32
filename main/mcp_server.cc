@@ -33,11 +33,7 @@ int g_xz_tools = 0;
 McpServer::McpServer() {
     // W2-b 第一步：固件里跑与模拟器同源的 xz_core（只做自检，暂不改工具行为）
     const std::string tools = xz::ToolsJson();
-    int n = 0;
-    for (char c : tools) {
-        if (c == '{') ++n;
-    }
-    xz::ToolsJson();                      // 幂等调用，确认可重入
+    const int n = xz::ToolCount();        // 之前数字符串里的 '{'，得到 88 这种假数
     xz::MusicQueue q;
     q.Set({"a", "b"}, {"A", "B"}, 0);
     const bool next_ok = q.Next();

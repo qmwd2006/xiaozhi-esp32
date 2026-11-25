@@ -15,6 +15,9 @@ struct Deps {
 // 23 个 self.* 工具的元数据（和固件 mcp_server.cc 同名同参）
 std::string ToolsJson();
 
+// 工具个数（自检/状态上报用，别去数字符串里的花括号）
+int ToolCount();
+
 // 处理一条 MCP payload（initialize / tools/list / tools/call），返回响应 payload
 std::string HandleMcp(const std::string& payload, Deps& deps);
 
