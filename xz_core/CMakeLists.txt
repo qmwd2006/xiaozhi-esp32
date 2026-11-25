@@ -18,7 +18,7 @@ if(EMSCRIPTEN)
     "-sALLOW_MEMORY_GROWTH=1"
     "-sMODULARIZE=1"
     "-sEXPORT_NAME=createXZCore"
-    "-sENVIRONMENT=web"
+    "-sENVIRONMENT=web,node"
     "--no-entry")
 else()
   add_executable(xz_core_tests tests/tests.cc)

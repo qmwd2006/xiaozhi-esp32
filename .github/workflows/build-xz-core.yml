@@ -53,7 +53,10 @@ jobs:
           const fs = require('fs');
           const factory = require('./build-wasm/xz_core.js');
           (async () => {
-            const m = typeof factory === 'function' ? await factory() : factory;
+            const path = require('path');
+            const m = typeof factory === 'function'
+              ? await factory({ locateFile: f => path.join(process.cwd(), 'build-wasm', f) })
+              : factory;
             const tools = JSON.parse(m.UTF8ToString(m._xz_tools_json()));
             console.log('wasm tools:', tools.length);
             if (tools.length !== 23) throw new Error('tools count ' + tools.length);
