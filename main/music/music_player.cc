@@ -351,6 +351,8 @@ void MusicPlayer::Stop() {
         cancelled_ = true;
         active_ = false;
         paused_ = false;
+        // 停止 = 回到开头：位置清零，下次播放从 0 秒开始（暂停才保留位置）。
+        played_samples_ = 0;
         // 丢弃排队中的换曲请求：Stop 是「真的不播了」。
         pending_url_.clear();
         pending_callback_ = nullptr;

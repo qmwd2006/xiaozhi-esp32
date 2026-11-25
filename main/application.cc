@@ -1542,11 +1542,11 @@ void Application::StopMusic() {
     // 用户明确"停止播放"：只停当前曲，保留播放列表与循环模式，之后可继续。
     // （清空列表请用 ClearMusicQueue / self.music.clear_queue。）
     music_user_stopped_ = true;
-    // 保留 current_music_url_ 与播放位置：stop 之后 resume 应从原位置继续，
-    // 之前这里清空 url/位置，导致"停止再继续"只能从头播（服务端只能自己记位置补偿）。
+    // 停止 = 回到开头：保留 current_music_url_（队列和当前曲都在），但位置清零，
+    // 之后 resume 从 0 秒开始。要保留位置用 pause，那是另一条语义。
     if (!current_music_url_.empty()) {
         music_resume_url_ = current_music_url_;
-        music_resume_position_ = music_player_.PositionSeconds();
+        music_resume_position_ = 0;
     }
     // 清掉「刚播完的曲目」，否则单曲循环会把这首重新入队再播。
     finished_music_url_.clear();
