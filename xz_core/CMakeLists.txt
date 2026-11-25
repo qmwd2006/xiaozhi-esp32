@@ -14,7 +14,7 @@ if(EMSCRIPTEN)
   set_target_properties(xz_wasm PROPERTIES OUTPUT_NAME "xz_core")
   target_link_options(xz_wasm PRIVATE
     "-sEXPORTED_FUNCTIONS=['_xz_tools_json','_xz_mcp_handle','_xz_music_state','_xz_music_set_index','_xz_queue_snapshot']"
-    "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToUTF8','lengthBytesUTF8']"
+    "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToUTF8','lengthBytesUTF8','ccall','cwrap']"
     "-sALLOW_MEMORY_GROWTH=1"
     "-sMODULARIZE=1"
     "-sEXPORT_NAME=createXZCore"

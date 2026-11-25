@@ -62,10 +62,10 @@ jobs:
             const tools = JSON.parse(m.UTF8ToString(m._xz_tools_json()));
             console.log('wasm tools:', tools.length);
             if (tools.length !== 23) throw new Error('tools count ' + tools.length);
-            const res = JSON.parse(m.UTF8ToString(m._xz_mcp_handle(JSON.stringify({
+            const res = JSON.parse(m.ccall('xz_mcp_handle', 'string', ['string'], [JSON.stringify({
               jsonrpc: '2.0', id: 1, method: 'tools/call',
               params: { name: 'self.music.set_queue', arguments: { urls: 'a\nb', titles: 'A\nB' } },
-            }))));
+            })]));
             const text = res.result.content[0].text;
             if (!text.includes('"queue_length":2')) throw new Error('unexpected: ' + text);
             console.log('set_queue ok:', text.slice(0, 60));
