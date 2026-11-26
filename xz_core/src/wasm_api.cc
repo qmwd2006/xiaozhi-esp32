@@ -133,7 +133,7 @@ const char* xz_device_event(const char* payload) {
     a.Parse(payload ? payload : "");
     xz::DeviceEvent ev;
     ev.event = a.Str("event", "idle");
-    ev.mode = a.Str("mode", "realtime");
+    ev.mode = a.Str("mode", "");   // 不传就别覆盖（事件里没带 mode 时保留上次的）
     ev.aec = a.Bool("aec", true);
     ev.music.busy = a.Bool("busy", false);
     ev.music.paused = a.Bool("paused", false);
