@@ -857,6 +857,17 @@ void Application::InitializeProtocol() {
                     });
                 }
             }
+        } else if (strcmp(type->valuestring, "listen") == 0) {
+            // 服务端主动结束收音（realtime 长时间无有效语音）：回 idle，不回发 stop
+            auto state = cJSON_GetObjectItem(root, "state");
+            if (cJSON_IsString(state) && strcmp(state->valuestring, "stop") == 0) {
+                Schedule([this]() {
+                    if (GetDeviceState() == kDeviceStateListening) {
+                        ESP_LOGI(TAG, "Server requested listen stop");
+                        SetDeviceState(kDeviceStateIdle);
+                    }
+                });
+            }
         } else if (strcmp(type->valuestring, "stt") == 0) {
             auto text = cJSON_GetObjectItem(root, "text");
             if (cJSON_IsString(text)) {
