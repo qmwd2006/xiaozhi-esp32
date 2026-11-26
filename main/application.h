@@ -250,6 +250,10 @@ private:
     bool music_user_paused_ = false;
     // 用户显式停止：worker 退出回调不得据此续播/循环（stop 只停当前曲、保留列表）。
     bool music_user_stopped_ = false;
+    // 与 xz_core 同源的状态机（音乐让路/续播、上行策略都由它裁决）；这里只执行 action。
+    xz::DeviceStateMachine xz_sm_;
+    bool xz_uplink_ = false;               // 当前状态下是否应该上传麦克风（核心给）
+    DeviceState xz_prev_state_ = kDeviceStateUnknown;
     // 已请求进入待机：等正在播报的道别 TTS 结束时（tts stop）强制回到 Idle 而非 Listening。
     bool standby_pending_ = false;
     // 循环模式：kOff 播完队列即停；kList 队列循环；kOne 单曲循环。

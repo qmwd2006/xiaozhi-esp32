@@ -101,6 +101,7 @@ DeviceReply DeviceStateMachine::Apply(State next, const MusicSnapshot& m) {
 DeviceReply DeviceStateMachine::OnEvent(const DeviceEvent& ev) {
     State next = state_;
     bool ack = false;
+    if (!ev.mode.empty()) mode_ = ParseMode(ev.mode);   // 固件每次都带当前 listening_mode
 
     if (ev.event == "wake") {
         mode_ = DefaultMode(ev.aec);

@@ -1231,6 +1231,32 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
 #endif
 }
 
+
+namespace {
+// 状态迁移 → xz_core 事件（规则在 core 里，这里只做翻译）
+const char* XzEventFor(DeviceState prev, DeviceState next) {
+    switch (next) {
+        case kDeviceStateConnecting: return "wake";
+        case kDeviceStateSpeaking:   return "tts_start";
+        case kDeviceStateListening:
+            if (prev == kDeviceStateSpeaking) return "tts_stop";
+            if (prev == kDeviceStateConnecting) return "ack_done";
+            return "user_start";
+        case kDeviceStateIdle:
+        default:                     return "idle";
+    }
+}
+
+const char* XzModeName(ListeningMode mode) {
+    switch (mode) {
+        case kListeningModeRealtime:   return "realtime";
+        case kListeningModeManualStop: return "manual";
+        case kListeningModeAutoStop:
+        default:                       return "auto";
+    }
+}
+}  // namespace
+
 void Application::HandleStateChangedEvent() {
     DeviceState new_state = state_machine_.GetState();
     clock_ticks_ = 0;
@@ -1238,54 +1264,48 @@ void Application::HandleStateChangedEvent() {
     // the Listening case below re-arms it when needed.
     pending_listening_start_ = false;
 
-    // 音乐只在空闲态输出。进入其它状态（聆听/服务器 TTS/连接）时「暂停」而非
-    // 「停止」：保留 HTTP 连接、解码器状态与播放位置，回到空闲后自动续播。
-    // 这样用户说「暂停/继续」以及对话打断后的恢复都能真正起作用。
-    //
-    // 注意：这里必须真正 Stop 而不是 Pause。音乐走的是到流媒体服务的
-    // 独立 HTTP 连接；Pause 会一直占着该连接与解码器缓冲，对话期间设备还要
-    // 持续上传麦克风音频，两者叠加会挤占内存与网络，实测导致
-    // 「EspSsl send timeout」无限重试、主循环假死。
-    // 因此打断时释放音乐连接并记住位置，回到空闲后从该位置续播。
-    if (new_state != kDeviceStateIdle && music_player_.IsBusy() &&
-        !music_player_.IsPaused()) {
-        music_paused_by_dialog_ = true;
-        music_resume_position_ = music_player_.PositionSeconds();
-        music_resume_url_ = current_music_url_;
-        music_player_.Stop();
-        audio_service_.ResetDecoder();
-        ESP_LOGI(TAG, "Music stopped for dialog at %ds (releasing HTTP)",
-                 music_resume_position_);
-    }
-    // 有待播放请求时，每个状态变化都尝试推进一次（Speaking -> Listening
-    // 也需要处理，否则会一直停在 Listening 永远不播）。
-    if (!pending_music_url_.empty()) {
-        TryStartPendingMusic();
-    }
-    if (new_state == kDeviceStateIdle) {
-        // 优先处理「Speaking 期间收到的播放请求」，它比打断续播更新。
-        if (pending_music_url_.empty() && music_paused_by_dialog_) {
-            // 对话结束：若用户没有显式暂停，则从打断位置续播。
-            music_paused_by_dialog_ = false;
-            if (!music_user_paused_ && !music_resume_url_.empty()) {
-                std::string url = std::move(music_resume_url_);
-                int position = music_resume_position_;
-                music_resume_url_.clear();
-                music_resume_position_ = 0;
-                if (StartMusicNow(url)) {
-                    if (position > 0) {
-                        music_player_.Seek(position);
-                    }
-                    ESP_LOGI(TAG, "Music resumed from %ds after returning to idle", position);
-                }
-            } else {
-                ESP_LOGI(TAG, "Music stays paused (user requested pause)");
+    // 音乐与上行的规则统一在 xz_core（与 /sim 的 wasm 同一份实现）：
+    // 离开 idle → stop 并记位置；回 idle → 续播（用户显式停/暂停则不续）；
+    // 上行 = listening 恒传 / speaking 仅 realtime 传。
+    // 触发上「先真正 Stop 而不是 Pause」：音乐走独立 HTTP 连接，Pause 会占着连接与
+    // 解码器缓冲，叠加麦克风上传会挤占内存与网络（实测 EspSsl send timeout 假死）。
+    {
+        xz::DeviceEvent ev;
+        ev.event = XzEventFor(xz_prev_state_, new_state);
+        ev.mode = XzModeName(listening_mode_);
+        ev.aec = aec_mode_ != kAecOff;
+        ev.music.busy = music_player_.IsBusy() && !music_player_.IsPaused();
+        ev.music.paused = music_player_.IsBusy() && music_player_.IsPaused();
+        ev.music.user_paused = music_user_paused_;
+        ev.music.user_stopped = music_user_stopped_;
+        ev.music.pos = music_player_.PositionSeconds();
+        ev.music.url = current_music_url_;
+        ev.music.index = music_index_;
+        ev.music.queue_len = static_cast<int>(music_queue_.size());
+        xz::DeviceReply r = xz_sm_.OnEvent(ev);
+        xz_prev_state_ = new_state;
+        xz_uplink_ = r.uplink;
+        music_paused_by_dialog_ = xz_sm_.music_paused_by_dialog();
+        music_user_stopped_ = xz_sm_.user_stopped();
+        if (r.music_action == "stop") {
+            music_resume_position_ = static_cast<int>(r.pos);
+            music_resume_url_ = r.url;
+            music_player_.Stop();
+            audio_service_.ResetDecoder();
+            ESP_LOGI(TAG, "Music stopped for dialog at %ds (releasing HTTP)",
+                     music_resume_position_);
+        }
+        // 待播放请求优先（Speaking 期间收到的点歌），它比打断续播更新
+        if (!pending_music_url_.empty()) {
+            TryStartPendingMusic();
+        } else if (r.music_action == "resume") {
+            if (StartMusicNow(r.url)) {
+                if (r.pos > 0) music_player_.Seek(static_cast<int>(r.pos));
+                ESP_LOGI(TAG, "Music resumed from %ds after returning to idle",
+                         static_cast<int>(r.pos));
             }
-        } else if (!music_user_stopped_ && !music_queue_.empty() &&
-                   !music_player_.IsBusy() && music_index_ >= 0) {
-            // 列表还有歌且当前无播放：继续播放当前索引（索引式，不消费列表）。
-            // 用户显式停止后（music_user_stopped_）不得自动重播。
-            StartMusicAt(music_index_);
+        } else if (r.music_action == "play_index") {
+            StartMusicAt(r.index);
         }
     }
 
@@ -1336,7 +1356,8 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateSpeaking:
             display->SetStatus(Lang::Strings::SPEAKING);
 
-            if (listening_mode_ != kListeningModeRealtime) {
+            // 是否继续上行由 xz_core 裁决（speaking 仅 realtime 为 true）
+            if (!xz_uplink_) {
                 audio_service_.EnableVoiceProcessing(false);
                 // Only AFE wake word can be detected in speaking mode
                 audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
@@ -1554,6 +1575,16 @@ void Application::StopMusic() {
     music_user_paused_ = false;
     pending_music_url_.clear();
     music_player_.Stop();
+    // 核心：待机 = 用户显式停止（之后回 idle 不得续播）
+    {
+        xz::DeviceEvent ev;
+        ev.event = "standby";
+        ev.mode = XzModeName(listening_mode_);
+        ev.music.busy = false;
+        ev.music.user_stopped = true;
+        xz_sm_.OnEvent(ev);
+        music_user_stopped_ = true;
+    }
     audio_service_.ResetDecoder();
     auto& board = Board::GetInstance();
     board.GetDisplay()->SetChatMessage("assistant", "");
