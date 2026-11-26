@@ -1306,6 +1306,8 @@ void Application::HandleStateChangedEvent() {
             }
         } else if (r.music_action == "play_index") {
             StartMusicAt(r.index);
+        } else if (r.music_action == "play") {      // 对话中排队的播放请求，回 idle 起播
+            StartMusicNow(r.url);
         }
     }
 

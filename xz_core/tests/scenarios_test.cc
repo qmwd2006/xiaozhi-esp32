@@ -15,7 +15,7 @@ struct Row {
     int busy, paused, user_paused, user_stopped;
     int pos, queue_len, index;
     std::string url;
-    std::string exp_state, exp_music;
+    std::string exp_state, exp_music, exp_url;
     int exp_uplink, exp_pos;
 };
 
@@ -57,6 +57,7 @@ int main(int argc, char** argv) {
         r.exp_uplink = std::atoi(c[11].c_str());
         r.exp_music = c[12];
         r.exp_pos = std::atoi(c[13].c_str());
+        r.exp_url = c.size() > 14 ? c[14] : "-";
 
         xz::DeviceEvent ev;
         ev.event = r.event;
@@ -68,6 +69,8 @@ int main(int argc, char** argv) {
         ev.music.url = r.url == "-" ? "" : r.url;
         ev.music.queue_len = r.queue_len;
         ev.music.index = r.index;
+        // music_request 用 url 列当「请求播放的地址」，其余场景 url 是当前曲目
+        if (r.event == "music_request") ev.url = r.url == "-" ? "" : r.url;
 
         auto it = machines.find(r.scenario);
         if (it == machines.end()) it = machines.emplace(r.scenario, xz::DeviceStateMachine()).first;
@@ -75,15 +78,18 @@ int main(int argc, char** argv) {
 
         std::string music = got.music_action.empty() ? "none" : got.music_action;
         ++total;
+        const std::string exp_url = r.exp_url == "-" ? "" : r.exp_url;
         const bool ok = std::string(xz::StateName(got.state)) == r.exp_state &&
                         got.uplink == (r.exp_uplink != 0) && music == r.exp_music &&
-                        static_cast<int>(got.pos) == r.exp_pos;
+                        static_cast<int>(got.pos) == r.exp_pos && got.url == exp_url;
         if (!ok) {
             ++failed;
-            std::printf("FAIL %s/%s: got state=%s uplink=%d music=%s pos=%d, want %s/%d/%s/%d\n",
+            std::printf("FAIL %s/%s: got state=%s uplink=%d music=%s pos=%d url=%s,"
+                        " want %s/%d/%s/%d/%s\n",
                         r.scenario.c_str(), r.event.c_str(), xz::StateName(got.state),
                         got.uplink ? 1 : 0, music.c_str(), static_cast<int>(got.pos),
-                        r.exp_state.c_str(), r.exp_uplink, r.exp_music.c_str(), r.exp_pos);
+                        got.url.c_str(), r.exp_state.c_str(), r.exp_uplink, r.exp_music.c_str(),
+                        r.exp_pos, exp_url.c_str());
         }
     }
     std::printf("设备状态场景：%d 步，%d 失败\n", total, failed);

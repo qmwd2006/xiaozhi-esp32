@@ -24,8 +24,10 @@ struct MusicSnapshot {
 };
 
 struct DeviceEvent {
-    std::string event;   // wake|ack_done|tts_start|tts_stop|user_start|user_stop|idle|standby|set_mode
-    std::string mode;    // set_mode 用：auto|manual|realtime
+    // wake|ack_done|tts_start|tts_stop|user_start|user_stop|idle|standby|reboot|set_mode|music_request
+    std::string event;
+    std::string mode;    // 每次带上当前 listening_mode；空 = 不覆盖
+    std::string url;     // music_request 用
     bool aec = true;     // 影响默认模式：AEC 开 → realtime
     MusicSnapshot music;
 };
@@ -35,7 +37,8 @@ struct DeviceReply {
     ListenMode mode = ListenMode::kRealtime;
     bool uplink = false;   // 是否上传麦克风（播报中只有 realtime 才上传）
     bool ack = false;      // 是否需要先回一声「在」
-    std::string music_action;  // "" | stop | resume | play_index
+    std::string music_action;  // "" | stop | resume | play_index | play（url 来自 music_request）
+    std::string channel;       // "" | close（standby/reboot 要关音频通道）
     double pos = 0;
     std::string url;
     int index = -1;
@@ -66,6 +69,8 @@ class DeviceStateMachine {
     bool user_stopped_ = false;
     std::string resume_url_;
     double resume_pos_ = 0;
+    // 对话中收到的播放请求：等回 idle 再起播（固件 pending_music_url_ 的语义）
+    std::string pending_url_;
 };
 
 }  // namespace xz

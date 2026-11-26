@@ -1,26 +1,32 @@
 # 行为契约：固件状态机 / music 让路 / 上行策略的唯一事实来源。
 # 固件原生测试（tests/scenarios_test.cc）、wasm node 冒烟、/sim「一致性自检」都读这一个文件。
-# 一行 = 一个事件；同 scenario 的行按顺序回放。
-# 列：scenario event busy paused user_paused user_stopped pos url queue_len index | exp_state exp_uplink exp_music exp_pos
-scenario	event	busy	paused	user_paused	user_stopped	pos	url	queue_len	index	exp_state	exp_uplink	exp_music	exp_pos
-wake_stops_music	wake	1	0	0	0	13	u1	0	-1	connecting	0	stop	13
-wake_stops_music	tts_start	0	0	0	0	0	-	0	-1	speaking	1	none	0
-wake_stops_music	tts_stop	0	0	0	0	0	-	0	-1	listening	1	none	0
-wake_stops_music	idle	0	0	0	0	0	-	0	-1	idle	0	resume	13
-user_stop_no_resume	wake	1	0	0	0	5	u1	1	0	connecting	0	stop	5
-user_stop_no_resume	tts_start	0	0	0	0	0	-	1	0	speaking	1	none	0
-user_stop_no_resume	tts_stop	0	0	0	0	0	-	1	0	listening	1	none	0
-user_stop_no_resume	user_stop	0	0	0	1	0	-	1	0	idle	0	none	0
-user_stop_no_resume	idle	0	0	0	1	0	-	1	0	idle	0	none	0
-realtime_speaking_uplink	wake	0	0	0	0	0	-	0	-1	connecting	0	none	0
-realtime_speaking_uplink	tts_start	0	0	0	0	0	-	0	-1	speaking	1	none	0
-realtime_speaking_uplink	tts_stop	0	0	0	0	0	-	0	-1	listening	1	none	0
-realtime_speaking_uplink	user_stop	0	0	0	0	0	-	0	-1	idle	0	none	0
-standby_stops_music_and_mic	standby	1	0	0	0	7	u1	0	-1	standby	0	stop	7
-manual_mode_no_speaking_uplink	user_start	0	0	0	0	0	-	0	-1	listening	1	none	0
-manual_mode_no_speaking_uplink	tts_start	0	0	0	0	0	-	0	-1	speaking	0	none	0
-manual_mode_no_speaking_uplink	tts_stop	0	0	0	0	0	-	0	-1	idle	0	none	0
-user_paused_not_resumed	wake	0	1	1	0	4	u1	0	-1	connecting	0	none	0
-user_paused_not_resumed	tts_start	0	1	1	0	0	-	0	-1	speaking	1	none	0
-user_paused_not_resumed	tts_stop	0	1	1	0	0	-	0	-1	listening	1	none	0
-user_paused_not_resumed	idle	0	1	1	0	0	-	0	-1	idle	0	none	0
+# 一行 = 一个事件；同 scenario 的行按顺序回放。最后两列是期望的 music url 与位置。
+scenario	event	busy	paused	user_paused	user_stopped	pos	url	queue_len	index	exp_state	exp_uplink	exp_music	exp_pos	exp_url
+wake_stops_music	wake	1	0	0	0	13	u1	0	-1	connecting	0	stop	13	u1
+wake_stops_music	tts_start	0	0	0	0	0	-	0	-1	speaking	1	none	0	-
+wake_stops_music	tts_stop	0	0	0	0	0	-	0	-1	listening	1	none	0	-
+wake_stops_music	idle	0	0	0	0	0	-	0	-1	idle	0	resume	13	u1
+user_stop_no_resume	wake	1	0	0	0	5	u1	1	0	connecting	0	stop	5	u1
+user_stop_no_resume	tts_start	0	0	0	0	0	-	1	0	speaking	1	none	0	-
+user_stop_no_resume	tts_stop	0	0	0	0	0	-	1	0	listening	1	none	0	-
+user_stop_no_resume	user_stop	0	0	0	1	0	-	1	0	idle	0	none	0	-
+user_stop_no_resume	idle	0	0	0	1	0	-	1	0	idle	0	none	0	-
+realtime_speaking_uplink	wake	0	0	0	0	0	-	0	-1	connecting	0	none	0	-
+realtime_speaking_uplink	tts_start	0	0	0	0	0	-	0	-1	speaking	1	none	0	-
+realtime_speaking_uplink	tts_stop	0	0	0	0	0	-	0	-1	listening	1	none	0	-
+realtime_speaking_uplink	user_stop	0	0	0	0	0	-	0	-1	idle	0	none	0	-
+standby_stops_music_and_mic	standby	1	0	0	0	7	u1	0	-1	standby	0	stop	7	u1
+manual_mode_no_speaking_uplink	user_start	0	0	0	0	0	-	0	-1	listening	1	none	0	-
+manual_mode_no_speaking_uplink	tts_start	0	0	0	0	0	-	0	-1	speaking	0	none	0	-
+manual_mode_no_speaking_uplink	tts_stop	0	0	0	0	0	-	0	-1	idle	0	none	0	-
+user_paused_not_resumed	wake	0	1	1	0	4	u1	0	-1	connecting	0	none	0	-
+user_paused_not_resumed	tts_start	0	1	1	0	0	-	0	-1	speaking	1	none	0	-
+user_paused_not_resumed	tts_stop	0	1	1	0	0	-	0	-1	listening	1	none	0	-
+user_paused_not_resumed	idle	0	1	1	0	0	-	0	-1	idle	0	none	0	-
+music_request_idle	music_request	0	0	0	0	0	u9	0	-1	idle	0	play	0	u9
+music_request_deferred	wake	0	0	0	0	0	-	0	-1	connecting	0	none	0	-
+music_request_deferred	ack_done	0	0	0	0	0	-	0	-1	listening	1	none	0	-
+music_request_deferred	music_request	0	0	0	0	0	u9	0	-1	listening	1	none	0	-
+music_request_deferred	tts_start	0	0	0	0	0	-	0	-1	speaking	1	none	0	-
+music_request_deferred	tts_stop	0	0	0	0	0	-	0	-1	listening	1	none	0	-
+music_request_deferred	idle	0	0	0	0	0	-	0	-1	idle	0	play	0	u9

@@ -141,6 +141,7 @@ const char* xz_device_event(const char* payload) {
     ev.music.user_stopped = a.Bool("user_stopped", false);
     ev.music.pos = static_cast<double>(a.Int("pos", 0));
     ev.music.url = a.Str("url", "");
+    ev.url = a.Str("req_url", "");
     ev.music.index = static_cast<int>(a.Int("index", -1));
     ev.music.queue_len = static_cast<int>(a.Int("queue_len", 0));
     g_out = g_sm.OnEvent(ev).ToJson();

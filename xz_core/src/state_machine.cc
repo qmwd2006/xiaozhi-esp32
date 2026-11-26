@@ -37,6 +37,7 @@ std::string DeviceReply::ToJson() const {
     j += uplink ? "true" : "false";
     j += ",\"ack\":";
     j += ack ? "true" : "false";
+    j += ",\"channel\":" + Quote(channel);
     j += ",\"music\":{\"action\":" + Quote(music_action);
     j += ",\"pos\":";
     j += std::to_string(static_cast<long long>(pos));
@@ -75,7 +76,11 @@ DeviceReply DeviceStateMachine::Apply(State next, const MusicSnapshot& m) {
 
     // 规则 1b：回 idle 续播；用户显式停止/暂停过则不动
     if (next == State::kIdle) {
-        if (paused_by_dialog_) {
+        if (!pending_url_.empty()) {          // 对话中收到的播放请求优先于续播
+            r.music_action = "play";
+            r.url = pending_url_;
+            pending_url_.clear();
+        } else if (paused_by_dialog_) {
             paused_by_dialog_ = false;
             const bool blocked = user_paused_ || user_stopped_ || m.user_paused || m.user_stopped;
             if (!blocked && !resume_url_.empty()) {
@@ -124,6 +129,22 @@ DeviceReply DeviceStateMachine::OnEvent(const DeviceEvent& ev) {
     } else if (ev.event == "standby") {
         user_stopped_ = true;
         next = State::kStandby;
+    } else if (ev.event == "reboot") {
+        user_stopped_ = true;
+        next = State::kIdle;
+    } else if (ev.event == "music_request") {
+        DeviceReply idle_now;
+        if (state_ == State::kIdle) {         // 空闲：立即播
+            idle_now.state = state_;
+            idle_now.mode = mode_;
+            idle_now.uplink = false;
+            idle_now.music_action = "play";
+            idle_now.url = ev.url;
+            return idle_now;
+        }
+        pending_url_ = ev.url;                // 对话中：等回 idle
+        DeviceReply r = Apply(state_, ev.music);
+        return r;
     } else if (ev.event == "set_mode") {
         mode_ = ParseMode(ev.mode);
         next = state_;
@@ -131,6 +152,7 @@ DeviceReply DeviceStateMachine::OnEvent(const DeviceEvent& ev) {
 
     DeviceReply r = Apply(next, ev.music);
     r.ack = ack;
+    if (ev.event == "standby" || ev.event == "reboot") r.channel = "close";
     return r;
 }
 

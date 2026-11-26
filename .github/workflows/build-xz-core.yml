@@ -85,12 +85,13 @@ jobs:
               aec: 1,
               busy: +row.busy, paused: +row.paused, user_paused: +row.user_paused,
               user_stopped: +row.user_stopped, pos: +row.pos,
-              url: row.url === '-' ? '' : row.url, queue_len: +row.queue_len, index: +row.index,
+              url: row.url === '-' ? '' : row.url, req_url: row.event === 'music_request' ? row.url : '',
+              queue_len: +row.queue_len, index: +row.index,
             });
             const lines = fs.readFileSync('xz_core/scenarios/device_scenarios.tsv', 'utf8')
               .split('\n').filter(l => l.trim() && !l.startsWith('#') && !l.startsWith('scenario'));
             let cur = null, total = 0, failed = 0;
-            const head = ['scenario','event','busy','paused','user_paused','user_stopped','pos','url','queue_len','index','exp_state','exp_uplink','exp_music','exp_pos'];
+            const head = ['scenario','event','busy','paused','user_paused','user_stopped','pos','url','queue_len','index','exp_state','exp_uplink','exp_music','exp_pos','exp_url'];
             for (const line of lines) {
               const c = line.split('\t');
               const row = Object.fromEntries(head.map((k, i) => [k, c[i]]));
@@ -98,8 +99,10 @@ jobs:
               const got = JSON.parse(m.ccall('xz_device_event', 'string', ['string'], [ev(row.event, row)]));
               const music = got.music.action || 'none';
               total++;
+              const expUrl = row.exp_url === '-' ? '' : row.exp_url;
               const ok = got.state === row.exp_state && (got.uplink ? 1 : 0) === +row.exp_uplink &&
-                         music === row.exp_music && (got.music.pos | 0) === +row.exp_pos;
+                         music === row.exp_music && (got.music.pos | 0) === +row.exp_pos &&
+                         got.music.url === expUrl;
               if (!ok) { failed++; console.log('FAIL', row.scenario + '/' + row.event, JSON.stringify(got)); }
             }
             console.log(`scenarios: ${total} steps, ${failed} failed`);
