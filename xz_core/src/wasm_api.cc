@@ -119,4 +119,32 @@ const char* xz_queue_snapshot(int limit) {
     return g_out.c_str();
 }
 
+// 设备状态机：入参扁平 JSON（sim 拼好），出参 action JSON
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+void xz_device_reset(void) { g_sm = xz::DeviceStateMachine(); }
+
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
+const char* xz_device_event(const char* payload) {
+    xz::Args a;
+    a.Parse(payload ? payload : "");
+    xz::DeviceEvent ev;
+    ev.event = a.Str("event", "idle");
+    ev.mode = a.Str("mode", "realtime");
+    ev.aec = a.Bool("aec", true);
+    ev.music.busy = a.Bool("busy", false);
+    ev.music.paused = a.Bool("paused", false);
+    ev.music.user_paused = a.Bool("user_paused", false);
+    ev.music.user_stopped = a.Bool("user_stopped", false);
+    ev.music.pos = static_cast<double>(a.Int("pos", 0));
+    ev.music.url = a.Str("url", "");
+    ev.music.index = static_cast<int>(a.Int("index", -1));
+    ev.music.queue_len = static_cast<int>(a.Int("queue_len", 0));
+    g_out = g_sm.OnEvent(ev).ToJson();
+    return g_out.c_str();
+}
+
 }  // extern "C"
