@@ -18,6 +18,7 @@
 #include "ota.h"
 #include "audio_service.h"
 #include "device_state.h"
+#include "xz/state_machine.h"
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
 #include "music/music_player.h"
