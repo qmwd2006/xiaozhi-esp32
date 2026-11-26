@@ -1,6 +1,8 @@
 #include <string>
 
+#include "xz/json_util.h"
 #include "xz/mcp.h"
+#include "xz/state_machine.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -8,6 +10,7 @@
 
 namespace {
 xz::MusicQueue g_queue;
+xz::DeviceStateMachine g_sm;
 std::string g_out;
 
 #ifdef __EMSCRIPTEN__
